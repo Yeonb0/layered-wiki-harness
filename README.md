@@ -72,15 +72,23 @@ python3 -m unittest discover -s tests -v
 
 llama-server, Dify, 네트워크 접근 없이 전부 통과해야 한다 (임베딩·Dify 호출부는 주입 가능하게 만들어져 있다).
 
-## 남은 작업 — 실제 파일럿 실행 전까지
+## 진행 상황
 
-하니스 코드와 내부 배선은 테스트로 검증됐지만(전부 `FakeDifyClient`·합성 임베딩 벡터로 검증), 실제 파일럿 1회를 돌리려면 아래가 채워져야 한다.
+### 완료한 것
 
-1. **Dify 워크플로 자체가 없다.** Dify UI에서 사람이 직접 구성해야 하는 부분이고, 배치 판정 프롬프트의 층 정의 기준도 아직 성문화되지 않아 임의로 채워 넣으면 안 된다 (`CLAUDE.md` "절대 하지 말 것" 1번). 이게 없으면 `--client real`로는 아무것도 못 돌린다.
-2. **llama-server 두 개(:8080 판정용, :8081 임베딩용)를 실제로 띄운 상태에서 한 번도 검증한 적 없다.** 코드 경로 자체는 단순 HTTP 호출이라 리스크는 낮지만 미검증이다.
-3. **파일럿 문서 코퍼스가 없다.** 몇 건을 넣을지는 실험 설계 미결정 항목이라 하니스가 정하지 않는다 — `--docs`에 넣을 실제 JSONL을 준비해야 한다.
-4. **머신별 실측값이 없다.** `--threads`(물리 코어 - 2), `--cold-start-threshold-seconds`(실측 필요), `--model-id`(실제 로컬 빌드/양자화본 식별자) 전부 지어내지 않고 필수 인자로만 남겨뒀다.
-5. **`DifyClient.run_workflow`의 실제 HTTP 재시도 로직이 이번 개발 과정에서 실서버 대상으로 검증된 적이 없다.** `FakeDifyClient` 경로만 테스트를 통과했다.
+1. 하니스 6개 모듈(판정 로그 스키마, 검색 레이어, Dify 클라이언트+응답 검증, 순차 성장 러너, 집계 스크립트) + 진입점(`run_pilot.py`) 구현 — `tests/` 27개 전부 통과 (`FakeDifyClient`·합성 임베딩 벡터로 검증)
+2. bge-m3 임베딩 서버를 실제로 기동해서 검증 — `llama-server --port 8081 -ngl 99 --embedding -hf gpustack/bge-m3-GGUF:Q8_0`, GPU 346MB 사용, `/v1/embeddings`가 1024차원 벡터를 정상 반환
+3. `run_pilot.py --client fake`로 **실제 bge-m3 서버**를 통한 전체 드라이런 실행 — `examples/sample_docs.jsonl` 5건 × 조건-셀 24개(B0/B1/B2/제안 × all_layers/split_by_layer × k=4/8/16) → 로그 120줄. 볼트별 순차 삽입(`inserted_at_vault_size` 0→4), 검색 후보가 볼트 크기만큼만 늘어나는 것과 k 상한이 실제로 지켜지는 것을 확인
+4. 위 실제 로그로 `analysis` 집계(cold_start/retried 제외 처리시간 통계, 조건별 분산, 누출 대조)까지 정상 실행 확인
+
+### 해야 할 것 (순서대로)
+
+1. **Dify 워크플로 구성.** Dify UI에서 사람이 직접 만들어야 하고, 배치 판정 프롬프트의 층 정의 기준부터 먼저 성문화해야 한다 — 이 두 가지는 `CLAUDE.md` "절대 하지 말 것" 1번에 걸려 내가 대신 못 한다.
+2. Qwen3 8B Q4_K_M 판정 LLM을 `llama-server`(:8080, `-ngl 0` CPU 전량 추론)로 기동하고 Dify(Docker) 컨테이너와 연동
+3. `--client real`로 위 워크플로를 1회 이상 실제 호출해 `DifyClient`의 타임아웃/재시도 경로까지 검증 (지금까지는 `FakeDifyClient` 경로만 통과)
+4. 파일럿 문서 코퍼스 준비 — 몇 건을 넣을지는 실험 설계 미결정 항목이라 하니스가 정하지 않는다
+5. 머신별 실측값 확정 — `--threads`(물리 코어 - 2), `--cold-start-threshold-seconds`(실측), `--model-id`(실제 로컬 빌드/양자화본 식별자)
+6. 위 전부 갖춰지면 실제 파일럿 실행 → 로그 축적 → `analysis`로 집계
 
 ## 범위 밖
 
