@@ -51,6 +51,19 @@ python3 run_pilot.py \
 
 `--docs`가 가리키는 JSONL은 `{"id", "title", "body"}` 필드를 가진 문서 한 줄씩이다 (몇 건을 넣을지는 실험 설계 미결정 항목이라 하니스가 정하지 않는다). Dify 워크플로가 아직 없으면 `--client fake`로 배선만 먼저 확인할 수 있다. `--conditions` / `--modes` / `--ks`로 CLAUDE.md가 이미 고정한 값의 부분집합만 돌릴 수도 있다.
 
+`examples/sample_docs.jsonl`은 실제 파일럿 코퍼스가 아니라 배선 확인용 샘플 5건이다. llama-server(:8081)가 떠 있는 상태에서 아래처럼 배선만 빠르게 확인할 수 있다.
+
+```
+python3 run_pilot.py \
+  --docs examples/sample_docs.jsonl \
+  --model-id dry-run \
+  --threads 2 \
+  --cold-start-threshold-seconds 999 \
+  --vault-dir /tmp/layered-wiki-dryrun/vaults \
+  --log-path /tmp/layered-wiki-dryrun/verdict_log.jsonl \
+  --client fake
+```
+
 ## 테스트
 
 ```
