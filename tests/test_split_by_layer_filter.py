@@ -25,10 +25,19 @@ class SplitByLayerFilterTest(unittest.TestCase):
         )
       )
 
-  def test_upper_layers_excluded(self) -> None:
+  def test_lower_layers_excluded(self) -> None:
+    Results = self.Retriever.search(query="질의", k=10, mode="split_by_layer", caller_layer="팀")
+    self.assertEqual(len(Results), 2)
+    self.assertTrue(all(Candidate.layer != "개인" for Candidate in Results))
+
+  def test_team_caller_has_no_personal_layer_candidates(self) -> None:
+    Results = self.Retriever.search(query="질의", k=10, mode="split_by_layer", caller_layer="팀")
+    self.assertFalse(any(Candidate.layer == "개인" for Candidate in Results))
+
+  def test_personal_caller_sees_self_and_upper(self) -> None:
     Results = self.Retriever.search(query="질의", k=10, mode="split_by_layer", caller_layer="개인")
-    self.assertEqual(len(Results), 1)
-    self.assertTrue(all(Candidate.layer == "개인" for Candidate in Results))
+    Layers = {Candidate.layer for Candidate in Results}
+    self.assertEqual(Layers, {"개인", "팀", "전사"})
 
   def test_missing_caller_layer_raises(self) -> None:
     with self.assertRaises(ValueError):

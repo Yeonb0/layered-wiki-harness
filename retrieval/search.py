@@ -27,8 +27,10 @@ class Retriever:
     if mode == "split_by_layer":
       if caller_layer is None:
         raise ValueError("split_by_layer 모드는 caller_layer 가 필요하다")
-      AllowedLayers = set(LAYER_ORDER[: LAYER_ORDER.index(caller_layer) + 1])
+      # 확정 결정 2026-09-23 - 자기 층 + 상위 층. LAYER_ORDER 는 하위 -> 상위 순서이므로 idx 부터 끝까지
+      AllowedLayers = set(LAYER_ORDER[LAYER_ORDER.index(caller_layer) :])
       Pool = [Entry for Entry in Pool if Entry[0].layer in AllowedLayers]
+      # TODO 개인 층은 본인 것만 봐야 하나 DocumentRecord 에 소유자 필드가 없어 구현 보류
     Scored = [(_cosine_similarity(QueryVector, Vector), Record) for Record, Vector in Pool]
     Scored.sort(key=lambda Pair: Pair[0], reverse=True)
     return [
