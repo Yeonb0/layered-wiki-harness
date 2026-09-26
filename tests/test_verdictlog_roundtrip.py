@@ -17,7 +17,9 @@ class VerdictLogRoundtripTest(unittest.TestCase):
       Writer = VerdictLogWriter(LogPath)
       Entry = VerdictLogEntry(
         entry_id="entry-1",
+        trial_id="trial-1",
         wall_clock="2026-09-20T00:00:00+00:00",
+        schedule_seed=20260923,
         run_index=0,
         doc_id="doc-1",
         doc_title="제목",
@@ -52,6 +54,8 @@ class VerdictLogRoundtripTest(unittest.TestCase):
       self.assertEqual(len(Loaded), 1)
       RoundTripped = Loaded[0]
       self.assertEqual(RoundTripped["entry_id"], "entry-1")
+      self.assertEqual(RoundTripped["trial_id"], "trial-1")
+      self.assertEqual(RoundTripped["schedule_seed"], 20260923)
       self.assertEqual(RoundTripped["condition"], "B0")
       self.assertEqual(RoundTripped["source_layer"], "개인")
       self.assertEqual(RoundTripped["retrieved_candidates"][0]["excerpt"], "발췌")

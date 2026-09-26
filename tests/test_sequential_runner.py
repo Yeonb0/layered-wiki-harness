@@ -156,6 +156,52 @@ class SequentialRunnerTest(unittest.TestCase):
     self.assertEqual(SpyForAll.Calls[-1][0], "all_layers")
     self.assertIsNone(SpyForAll.Calls[-1][1])
 
+  def test_all_log_entries_in_one_run_share_trial_id_and_schedule_seed(self) -> None:
+    Docs = [InputDoc(id=f"d{i}", title=f"제목{i}", body=f"본문{i}", source_layer="개인") for i in range(3)]
+    CellA = ConditionCell(condition=Condition.B0, mode="all_layers", k=4)
+    CellB = ConditionCell(condition=Condition.B1, mode="split_by_layer", k=4)
+    States = {CellA: _build_cell_state("B0", "all_layers"), CellB: _build_cell_state("B1", "split_by_layer")}
+    Log = LogSpy()
+
+    run(
+      Docs=Docs,
+      ConditionCellStates=States,
+      client=FakeDifyClient(),
+      log_writer=Log,
+      cold_start_detector=ColdStartDetector(threshold_seconds=999),
+      schedule_seed=7,
+    )
+
+    TrialIds = {Entry.trial_id for Entry in Log.Entries}
+    ScheduleSeeds = {Entry.schedule_seed for Entry in Log.Entries}
+    self.assertEqual(len(TrialIds), 1)
+    self.assertEqual(ScheduleSeeds, {7})
+
+  def test_two_run_calls_have_different_trial_id(self) -> None:
+    Docs = [InputDoc(id="d0", title="제목", body="본문", source_layer="개인")]
+    Cell = ConditionCell(condition=Condition.B0, mode="all_layers", k=4)
+    LogFirst = LogSpy()
+    LogSecond = LogSpy()
+
+    run(
+      Docs=Docs,
+      ConditionCellStates={Cell: _build_cell_state("B0", "all_layers")},
+      client=FakeDifyClient(),
+      log_writer=LogFirst,
+      cold_start_detector=ColdStartDetector(threshold_seconds=999),
+      schedule_seed=1,
+    )
+    run(
+      Docs=Docs,
+      ConditionCellStates={Cell: _build_cell_state("B0", "all_layers")},
+      client=FakeDifyClient(),
+      log_writer=LogSecond,
+      cold_start_detector=ColdStartDetector(threshold_seconds=999),
+      schedule_seed=1,
+    )
+
+    self.assertNotEqual(LogFirst.Entries[0].trial_id, LogSecond.Entries[0].trial_id)
+
 
 if __name__ == "__main__":
   unittest.main()

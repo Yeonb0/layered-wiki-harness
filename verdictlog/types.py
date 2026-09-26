@@ -18,7 +18,9 @@ class Verdict:
 @dataclass
 class VerdictLogEntry:
   entry_id: str
+  trial_id: str
   wall_clock: str
+  schedule_seed: int
   run_index: int
   doc_id: str
   doc_title: str

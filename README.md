@@ -46,8 +46,11 @@ python3 run_pilot.py \
   --threads <물리 코어 - 2> \
   --cold-start-threshold-seconds <실측값> \
   --vault-dir ./vaults/<run명> \
-  --log-path ./logs/<run명>/verdict_log.jsonl
+  --log-path ./logs/<run명>/verdict_log.jsonl \
+  --schedule-seed <시드>
 ```
+
+투입 순서 시드를 몇 개 돌릴지, 값을 무엇으로 할지는 실험 설계 미결정 항목이라 하니스가 정하지 않는다.
 
 `--docs`가 가리키는 JSONL은 `{"id", "title", "body"}` 필드를 가진 문서 한 줄씩이다 (몇 건을 넣을지는 실험 설계 미결정 항목이라 하니스가 정하지 않는다). Dify 워크플로가 아직 없으면 `--client fake`로 배선만 먼저 확인할 수 있다. `--conditions` / `--modes` / `--ks`로 CLAUDE.md가 이미 고정한 값의 부분집합만 돌릴 수도 있다.
 
@@ -62,8 +65,11 @@ python3 run_pilot.py \
   --vault-dir /tmp/layered-wiki-dryrun/vaults \
   --log-path /tmp/layered-wiki-dryrun/verdict_log.jsonl \
   --modes all_layers \
+  --schedule-seed 1 \
   --client fake
 ```
+
+`--schedule-seed`는 아무 정수나 써도 되지만 필수 인자다 — 시드를 명시하지 않은 실행은 사후에 투입 순서를 재현할 수 없기 때문이다.
 
 `--modes all_layers`를 붙인 이유 : 이 샘플 문서에는 `source_layer`가 없고, `source_layer` 없이 `split_by_layer`를 돌리면 러너가 `ValueError`를 던지는 것이 확정 결정(2026-09-26)에 따른 올바른 동작이다.
 

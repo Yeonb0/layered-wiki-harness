@@ -18,7 +18,6 @@ from verdictlog.writer import VerdictLogWriter
 DEFAULT_CONDITIONS = "B0,B1,B2,제안"
 DEFAULT_MODES = "all_layers,split_by_layer"
 DEFAULT_KS = "4,8,16"
-DEFAULT_SCHEDULE_SEED = 42
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,7 +31,7 @@ def parse_args() -> argparse.Namespace:
   Parser.add_argument("--conditions", default=DEFAULT_CONDITIONS)
   Parser.add_argument("--modes", default=DEFAULT_MODES)
   Parser.add_argument("--ks", default=DEFAULT_KS)
-  Parser.add_argument("--schedule-seed", type=int, default=DEFAULT_SCHEDULE_SEED)
+  Parser.add_argument("--schedule-seed", type=int, required=True, help="투입 순서 시드 - 명시해야 사후에 순서를 재현할 수 있다")
   Parser.add_argument("--client", choices=["real", "fake"], default="real")
   return Parser.parse_args()
 

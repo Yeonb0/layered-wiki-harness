@@ -58,6 +58,7 @@ class MainSmokeTest(unittest.TestCase):
         "--conditions", "B0,B1",
         "--modes", "all_layers,split_by_layer",
         "--ks", "4",
+        "--schedule-seed", "1",  # 값은 테스트 픽스처일 뿐이다
         "--client", "fake",
       ]
       try:

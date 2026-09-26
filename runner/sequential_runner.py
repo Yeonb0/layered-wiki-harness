@@ -28,12 +28,21 @@ def run(
       # 빈 볼트에서 시작해야 한다 - 재사용된 볼트 파일이면 볼트 크기 곡선 자체가 무의미해진다
       raise ValueError(f"condition cell {Cell} 의 볼트가 비어있지 않다 (size={State.vault.size()})")
 
+  TrialId = str(uuid.uuid4())
   Schedule = build_interleaved_schedule(Docs, list(ConditionCellStates.keys()), schedule_seed)
   RunIndexByCell = {SelectedCell: 0 for SelectedCell in ConditionCellStates}
 
   for Doc, SelectedCell in Schedule:
     _process_one(
-      Doc, SelectedCell, ConditionCellStates[SelectedCell], client, log_writer, cold_start_detector, RunIndexByCell
+      Doc,
+      SelectedCell,
+      ConditionCellStates[SelectedCell],
+      client,
+      log_writer,
+      cold_start_detector,
+      RunIndexByCell,
+      TrialId,
+      schedule_seed,
     )
 
 
@@ -45,6 +54,8 @@ def _process_one(
   log_writer: VerdictLogWriter,
   cold_start_detector: ColdStartDetector,
   run_index_by_cell: dict[ConditionCell, int],
+  trial_id: str,
+  schedule_seed: int,
 ) -> None:
   VaultSize = state.vault.size()
   if cell.mode == "split_by_layer":
@@ -100,7 +111,9 @@ def _process_one(
   log_writer.append(
     VerdictLogEntry(
       entry_id=str(uuid.uuid4()),
+      trial_id=trial_id,
       wall_clock=datetime.now(timezone.utc).isoformat(),
+      schedule_seed=schedule_seed,
       run_index=RunIndex,
       doc_id=doc.id,
       doc_title=doc.title,
