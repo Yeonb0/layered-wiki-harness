@@ -29,10 +29,15 @@ class ValidateOutputsTest(unittest.TestCase):
     Result = validate_outputs(_ok_result("개인"), mode="split_by_layer", caller_layer="개인")
     self.assertTrue(Result.valid)
 
-  def test_invalid_under_split_by_layer_when_layer_exceeds_caller_scope(self) -> None:
+  def test_invalid_under_split_by_layer_when_layer_above_source(self) -> None:
     Result = validate_outputs(_ok_result("팀"), mode="split_by_layer", caller_layer="개인")
     self.assertFalse(Result.valid)
-    self.assertIn("layer_exceeds_caller_scope_under_split_by_layer", Result.problems)
+    self.assertIn("layer_above_source_under_split_by_layer", Result.problems)
+
+  def test_invalid_under_split_by_layer_when_layer_below_source(self) -> None:
+    Result = validate_outputs(_ok_result("개인"), mode="split_by_layer", caller_layer="팀")
+    self.assertFalse(Result.valid)
+    self.assertIn("layer_below_source", Result.problems)
 
   def test_missing_caller_layer_under_split_by_layer_raises(self) -> None:
     with self.assertRaises(ValueError):

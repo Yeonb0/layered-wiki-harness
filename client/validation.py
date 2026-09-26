@@ -45,9 +45,11 @@ def validate_outputs(result: WorkflowResult, mode: Mode, caller_layer: str | Non
     Problems.append("layer_missing_or_not_string")
   elif Layer not in LAYER_ORDER:
     Problems.append("layer_not_recognized")
-  elif mode == "split_by_layer" and Layer != caller_layer:
-    # 층별 인스턴스는 자기 층 밖에 새 항목을 만들 권한이 없다 - 이게 누출 0 하한 기준선의 근거
-    Problems.append("layer_exceeds_caller_scope_under_split_by_layer")
+  elif mode == "split_by_layer" and LAYER_ORDER.index(Layer) > LAYER_ORDER.index(caller_layer):
+    # 확정 결정 2026-09-26 - 층별 분리 모드의 판정 층은 출처 층으로 제한
+    Problems.append("layer_above_source_under_split_by_layer")
+  elif mode == "split_by_layer" and LAYER_ORDER.index(Layer) < LAYER_ORDER.index(caller_layer):
+    Problems.append("layer_below_source")
 
   UpwardLinks = RawVerdict.get("upward_links")
   if not isinstance(UpwardLinks, list) or not all(isinstance(X, str) for X in UpwardLinks):
