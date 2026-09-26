@@ -1,0 +1,33 @@
+{
+ "seed": 20260923,
+ "frac": 0.1,
+ "unit": "most specific MOC, else single note",
+ "pilot_units": [
+  "solo:정보처리기사/소프트웨어 설계/애플리케이션 설계/Abstract Factory.md",
+  "solo:정보처리기사/소프트웨어 설계/애플리케이션 설계/Chain of Responsibility.md",
+  "solo:정보처리기사/소프트웨어 설계/애플리케이션 설계/Command.md",
+  "solo:정보처리기사/소프트웨어 설계/애플리케이션 설계/Composite.md",
+  "solo:정보처리기사/소프트웨어 설계/애플리케이션 설계/Facade.md",
+  "solo:정보처리기사/소프트웨어 설계/애플리케이션 설계/Iterator.md",
+  "solo:정보처리기사/소프트웨어 설계/애플리케이션 설계/Strategy.md",
+  "solo:정보처리기사/소프트웨어 설계/애플리케이션 설계/Visitor.md",
+  "solo:정보처리기사/소프트웨어 설계/애플리케이션 설계/레이어 패턴.md",
+  "solo:정보처리기사/소프트웨어 설계/요구사항 확인/SADT.md",
+  "solo:정보처리기사/소프트웨어 설계/요구사항 확인/Small Releases.md",
+  "solo:정보처리기사/소프트웨어 설계/요구사항 확인/Whole Team.md",
+  "solo:정보처리기사/소프트웨어 설계/요구사항 확인/다이어그램.md",
+  "solo:정보처리기사/소프트웨어 설계/요구사항 확인/사용자 요구 사항.md",
+  "solo:정보처리기사/소프트웨어 설계/요구사항 확인/순차 다이어그램.md",
+  "solo:정보처리기사/소프트웨어 설계/요구사항 확인/제품 백로그.md",
+  "solo:정보처리기사/소프트웨어 설계/요구사항 확인/폭포수 모형.md",
+  "solo:정보처리기사/소프트웨어 설계/화면 설계/UI의 구분.md",
+  "solo:정보처리기사/정보시스템 구축 관리/소프트웨어 개발 보안 구축/양방향 암호화 알고리즘.md",
+  "solo:컴퓨터시스템개론/pop.md",
+  "정보처리기사/_MOC/데이터 전환.md",
+  "정보처리기사/_MOC/요구사항 확인.md",
+  "정보처리기사/_MOC/화면 설계.md",
+  "컴퓨터 네트워크/_MOC/Digital Transmission.md",
+  "컴퓨터시스템개론/_MOC/Assembly Function.md",
+  "프로그래밍 언어/_MOC/이름, 바인딩, 타입 검사, 스코프.md"
+ ]
+}
