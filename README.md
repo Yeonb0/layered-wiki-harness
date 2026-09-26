@@ -61,8 +61,11 @@ python3 run_pilot.py \
   --cold-start-threshold-seconds 999 \
   --vault-dir /tmp/layered-wiki-dryrun/vaults \
   --log-path /tmp/layered-wiki-dryrun/verdict_log.jsonl \
+  --modes all_layers \
   --client fake
 ```
+
+`--modes all_layers`를 붙인 이유 : 이 샘플 문서에는 `source_layer`가 없고, `source_layer` 없이 `split_by_layer`를 돌리면 러너가 `ValueError`를 던지는 것이 확정 결정(2026-09-26)에 따른 올바른 동작이다.
 
 ## 테스트
 

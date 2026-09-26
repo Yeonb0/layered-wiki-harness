@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from client.dify_client import DifyClient
 from client.validation import validate_outputs
+from retrieval.search import LAYER_ORDER
 from runner.cold_start import ColdStartDetector
 from runner.conditions import ConditionCell, build_interleaved_schedule
 from runner.types import ConditionCellState, InputDoc
@@ -46,7 +47,13 @@ def _process_one(
   run_index_by_cell: dict[ConditionCell, int],
 ) -> None:
   VaultSize = state.vault.size()
-  CallerLayer = "개인" if cell.mode == "split_by_layer" else None
+  if cell.mode == "split_by_layer":
+    if doc.source_layer is None or doc.source_layer not in LAYER_ORDER:
+      # 확정 결정 2026-09-26 - 조용히 기본값을 쓰면 검색 후보가 전 층 열람과 같아져 누출 0 하한 기준선이 무너진다
+      raise ValueError(f"split_by_layer 모드는 문서의 source_layer 가 LAYER_ORDER 안의 값이어야 한다 (doc={doc.id}, source_layer={doc.source_layer!r})")
+    CallerLayer = doc.source_layer
+  else:
+    CallerLayer = None
   Candidates = state.retriever.search(
     query=doc.title + "\n" + doc.body,
     k=cell.k,
@@ -72,7 +79,7 @@ def _process_one(
   ProcessingTimeSeconds = EndedAt - StartedAt
   cold_start_detector.record_call_end(EndedAt)
 
-  Validation = validate_outputs(Result, mode=cell.mode, caller_layer=CallerLayer)
+  Validation = validate_outputs(Result, mode=cell.mode, caller_layer=CallerLayer, source_layer=doc.source_layer)
 
   if Validation.valid and Validation.verdict is not None:
     Record = DocumentRecord(
@@ -98,6 +105,7 @@ def _process_one(
       doc_id=doc.id,
       doc_title=doc.title,
       doc_body=doc.body,
+      source_layer=doc.source_layer,
       condition=cell.condition,
       mode=cell.mode,
       k=cell.k,

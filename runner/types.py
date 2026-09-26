@@ -10,6 +10,7 @@ class InputDoc:
   id: str
   title: str
   body: str
+  source_layer: str | None = None
 
 
 @dataclass

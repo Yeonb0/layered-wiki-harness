@@ -22,6 +22,7 @@ class VerdictLogRoundtripTest(unittest.TestCase):
         doc_id="doc-1",
         doc_title="제목",
         doc_body="본문",
+        source_layer="개인",
         condition=Condition.B0,
         mode="split_by_layer",
         k=4,
@@ -52,6 +53,7 @@ class VerdictLogRoundtripTest(unittest.TestCase):
       RoundTripped = Loaded[0]
       self.assertEqual(RoundTripped["entry_id"], "entry-1")
       self.assertEqual(RoundTripped["condition"], "B0")
+      self.assertEqual(RoundTripped["source_layer"], "개인")
       self.assertEqual(RoundTripped["retrieved_candidates"][0]["excerpt"], "발췌")
       self.assertEqual(RoundTripped["verdict"]["downward_conditional_links"][0]["visibility_condition"], "팀 이상")
       self.assertTrue(RoundTripped["retried"])

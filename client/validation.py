@@ -13,10 +13,16 @@ class ValidationResult:
   verdict: Verdict | None
 
 
-def validate_outputs(result: WorkflowResult, mode: Mode, caller_layer: str | None) -> ValidationResult:
+def validate_outputs(
+  result: WorkflowResult, mode: Mode, caller_layer: str | None, source_layer: str | None = None
+) -> ValidationResult:
   if mode == "split_by_layer" and caller_layer is None:
     # retrieval.search 와 동일한 이유 - 검증기가 조용히 통과하면 누출 0 하한 기준선이 무너진다
     raise ValueError("split_by_layer 모드는 caller_layer 가 필요하다")
+
+  if mode == "split_by_layer" and caller_layer != source_layer:
+    # 확정 결정 2026-09-26 - 층별 분리 모드의 caller_layer 는 문서의 출처 층과 같아야 한다
+    raise ValueError("split_by_layer 모드는 caller_layer 와 source_layer 가 같아야 한다")
 
   Problems: list[str] = []
 
@@ -45,11 +51,13 @@ def validate_outputs(result: WorkflowResult, mode: Mode, caller_layer: str | Non
     Problems.append("layer_missing_or_not_string")
   elif Layer not in LAYER_ORDER:
     Problems.append("layer_not_recognized")
-  elif mode == "split_by_layer" and LAYER_ORDER.index(Layer) > LAYER_ORDER.index(caller_layer):
-    # 확정 결정 2026-09-26 - 층별 분리 모드의 판정 층은 출처 층으로 제한
-    Problems.append("layer_above_source_under_split_by_layer")
-  elif mode == "split_by_layer" and LAYER_ORDER.index(Layer) < LAYER_ORDER.index(caller_layer):
-    Problems.append("layer_below_source")
+  else:
+    if mode == "split_by_layer" and LAYER_ORDER.index(Layer) > LAYER_ORDER.index(caller_layer):
+      # 확정 결정 2026-09-26 - 층별 분리 모드의 판정 층은 출처 층으로 제한
+      Problems.append("layer_above_source_under_split_by_layer")
+    if source_layer is not None and LAYER_ORDER.index(Layer) < LAYER_ORDER.index(source_layer):
+      # 모드와 무관하다 - split_by_layer 에서는 caller_layer 가 source_layer 와 같으므로 위 caller_layer 비교와 겹치지 않는다
+      Problems.append("layer_below_source")
 
   UpwardLinks = RawVerdict.get("upward_links")
   if not isinstance(UpwardLinks, list) or not all(isinstance(X, str) for X in UpwardLinks):

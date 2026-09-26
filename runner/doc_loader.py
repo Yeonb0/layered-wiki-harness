@@ -13,5 +13,5 @@ def load_docs(path: str) -> list[InputDoc]:
       if not Line:
         continue
       Raw = json.loads(Line)
-      Docs.append(InputDoc(id=Raw["id"], title=Raw["title"], body=Raw["body"]))
+      Docs.append(InputDoc(id=Raw["id"], title=Raw["title"], body=Raw["body"], source_layer=Raw.get("source_layer")))
   return Docs

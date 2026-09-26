@@ -23,6 +23,7 @@ class VerdictLogEntry:
   doc_id: str
   doc_title: str
   doc_body: str
+  source_layer: str | None
   condition: Condition
   mode: Mode
   k: int

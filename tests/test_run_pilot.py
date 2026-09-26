@@ -34,8 +34,12 @@ class MainSmokeTest(unittest.TestCase):
     with tempfile.TemporaryDirectory() as TempDir:
       DocsPath = os.path.join(TempDir, "docs.jsonl")
       with open(DocsPath, "w", encoding="utf-8") as File:
+        # source_layer 값은 테스트 픽스처일 뿐이며 출처 층 부여 규칙과 무관하다
         for Index in range(2):
-          File.write(json.dumps({"id": f"d{Index}", "title": f"제목{Index}", "body": f"본문{Index}"}) + "\n")
+          File.write(
+            json.dumps({"id": f"d{Index}", "title": f"제목{Index}", "body": f"본문{Index}", "source_layer": "개인"})
+            + "\n"
+          )
 
       VaultDir = os.path.join(TempDir, "vault")
       LogPath = os.path.join(TempDir, "logs", "verdict_log.jsonl")
