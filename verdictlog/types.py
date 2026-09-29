@@ -25,6 +25,8 @@ class VerdictLogEntry:
   doc_id: str
   doc_title: str
   doc_body: str
+  # 라벨링 기준 v1 §8 view_sha256 과 사후 대조용
+  doc_view_sha256: str
   source_layer: str | None
   condition: Condition
   mode: Mode

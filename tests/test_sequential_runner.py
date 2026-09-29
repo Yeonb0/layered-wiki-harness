@@ -1,6 +1,8 @@
+import hashlib
 import unittest
 
-from client.fake_client import FakeDifyClient
+from client.fake_client import FIXED_VERDICT, FakeDifyClient
+from client.types import WorkflowResult
 from config.run_config import RunConfig
 from retrieval.search import Retriever
 from runner.cold_start import ColdStartDetector
@@ -34,6 +36,18 @@ class LogSpy:
 
   def append(self, entry) -> None:
     self.Entries.append(entry)
+
+
+class SpyDifyClient:
+  # 픽스처일 뿐이며 규칙과 무관하다
+  def __init__(self) -> None:
+    self.Calls: list[str] = []
+
+  def run_workflow(
+    self, doc: str, candidates_json: str, vault_size: int, mode: str, run_config_json: str
+  ) -> tuple[WorkflowResult, bool]:
+    self.Calls.append(doc)
+    return (WorkflowResult(ok=True, errors=[], verdict=dict(FIXED_VERDICT), log="spy_log"), False)
 
 
 class SpyRetriever:
@@ -201,6 +215,28 @@ class SequentialRunnerTest(unittest.TestCase):
     )
 
     self.assertNotEqual(LogFirst.Entries[0].trial_id, LogSecond.Entries[0].trial_id)
+
+  def test_run_workflow_receives_title_and_log_records_matching_view_hash(self) -> None:
+    # title/body 는 서로 겹치지 않는 문자열로 둔다 - 겹치면 제목 누락 버그를 못 잡는다. 픽스처일 뿐이며 규칙과 무관하다
+    Doc = InputDoc(id="d0", title="TITLE-ONLY-9f3", body="BODY-CONTENT-7k2", source_layer="개인")
+    Cell = ConditionCell(condition=Condition.B0, mode="all_layers", k=4)
+    State = _build_cell_state("B0", "all_layers")
+    Client = SpyDifyClient()
+    Log = LogSpy()
+
+    run(
+      Docs=[Doc],
+      ConditionCellStates={Cell: State},
+      client=Client,
+      log_writer=Log,
+      cold_start_detector=ColdStartDetector(threshold_seconds=999),
+      schedule_seed=1,
+    )
+
+    SentDoc = Client.Calls[-1]
+    self.assertIn("TITLE-ONLY-9f3", SentDoc)
+    ExpectedHash = hashlib.sha256(SentDoc.encode("utf-8")).hexdigest()
+    self.assertEqual(Log.Entries[-1].doc_view_sha256, ExpectedHash)
 
 
 if __name__ == "__main__":

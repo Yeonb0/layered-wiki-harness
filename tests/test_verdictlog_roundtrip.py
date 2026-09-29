@@ -24,6 +24,7 @@ class VerdictLogRoundtripTest(unittest.TestCase):
         doc_id="doc-1",
         doc_title="제목",
         doc_body="본문",
+        doc_view_sha256="0" * 64,
         source_layer="개인",
         condition=Condition.B0,
         mode="split_by_layer",

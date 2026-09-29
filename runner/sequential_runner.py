@@ -1,3 +1,4 @@
+import hashlib
 import json
 import time
 import uuid
@@ -7,6 +8,7 @@ from datetime import datetime, timezone
 from client.dify_client import DifyClient
 from client.validation import validate_outputs
 from retrieval.search import LAYER_ORDER
+from runner.agent_view import build_agent_view
 from runner.cold_start import ColdStartDetector
 from runner.conditions import ConditionCell, build_interleaved_schedule
 from runner.types import ConditionCellState, InputDoc
@@ -78,9 +80,13 @@ def _process_one(
   RunConfigSnapshot = asdict(state.run_config)
   RunConfigJson = json.dumps(RunConfigSnapshot, ensure_ascii=False)
 
+  # 라벨링 기준 v1 §1 - 제목을 빼면 라벨러가 본 정보를 에이전트가 받지 못한다
+  AgentView = build_agent_view(doc.title, doc.body)
+  DocViewSha256 = hashlib.sha256(AgentView.encode("utf-8")).hexdigest()
+
   StartedAt = time.monotonic()
   Result, Retried = client.run_workflow(
-    doc=doc.body,
+    doc=AgentView,
     candidates_json=CandidatesJson,
     vault_size=VaultSize,
     mode=cell.mode,
@@ -119,6 +125,7 @@ def _process_one(
       doc_id=doc.id,
       doc_title=doc.title,
       doc_body=doc.body,
+      doc_view_sha256=DocViewSha256,
       source_layer=doc.source_layer,
       condition=cell.condition,
       mode=cell.mode,
