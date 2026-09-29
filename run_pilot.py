@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import os
 from itertools import product
 
@@ -33,7 +34,17 @@ def parse_args() -> argparse.Namespace:
   Parser.add_argument("--ks", default=DEFAULT_KS)
   Parser.add_argument("--schedule-seed", type=int, required=True, help="투입 순서 시드 - 명시해야 사후에 순서를 재현할 수 있다")
   Parser.add_argument("--client", choices=["real", "fake"], default="real")
+  Parser.add_argument("--criteria-path", required=True, help="라벨링 기준 v1 파일 경로 - SHA-256 을 RunConfig.criteria_sha256 에 기록한다")
+  # 기본값으로 null 이 들어가면 본실험에서 라벨 해시가 조용히 빠진다
+  LabelsGroup = Parser.add_mutually_exclusive_group(required=True)
+  LabelsGroup.add_argument("--labels-path", help="라벨 파일 경로 - SHA-256 을 RunConfig.labels_sha256 에 기록한다")
+  LabelsGroup.add_argument("--no-labels", action="store_true", help="라벨 없음 - RunConfig.labels_sha256 = None")
   return Parser.parse_args()
+
+
+def _sha256_file(path: str) -> str:
+  with open(path, "rb") as File:
+    return hashlib.sha256(File.read()).hexdigest()
 
 
 def build_condition_cell_states(
@@ -43,6 +54,8 @@ def build_condition_cell_states(
   VaultDir: str,
   ModelId: str,
   Threads: int,
+  CriteriaSha256: str,
+  LabelsSha256: str | None,
 ) -> dict[ConditionCell, ConditionCellState]:
   States: dict[ConditionCell, ConditionCellState] = {}
   for ConditionValue, ModeValue, KValue in product(Conditions, Modes, Ks):
@@ -51,7 +64,15 @@ def build_condition_cell_states(
     States[Cell] = ConditionCellState(
       vault=JsonlVaultStore(VaultPath),
       retriever=Retriever(),
-      run_config=RunConfig(condition=ConditionValue, mode=ModeValue, k=KValue, model_id=ModelId, threads=Threads),
+      run_config=RunConfig(
+        condition=ConditionValue,
+        mode=ModeValue,
+        k=KValue,
+        model_id=ModelId,
+        criteria_sha256=CriteriaSha256,
+        labels_sha256=LabelsSha256,
+        threads=Threads,
+      ),
     )
   return States
 
@@ -65,6 +86,9 @@ def main() -> None:
   if LogDir:
     os.makedirs(LogDir, exist_ok=True)
 
+  CriteriaSha256 = _sha256_file(Args.criteria_path)
+  LabelsSha256 = None if Args.no_labels else _sha256_file(Args.labels_path)
+
   States = build_condition_cell_states(
     Conditions=Args.conditions.split(","),
     Modes=Args.modes.split(","),
@@ -72,6 +96,8 @@ def main() -> None:
     VaultDir=Args.vault_dir,
     ModelId=Args.model_id,
     Threads=Args.threads,
+    CriteriaSha256=CriteriaSha256,
+    LabelsSha256=LabelsSha256,
   )
 
   Client = DifyClient.from_env() if Args.client == "real" else FakeDifyClient.from_env()

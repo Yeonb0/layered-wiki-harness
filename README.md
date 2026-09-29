@@ -47,6 +47,8 @@ python3 run_pilot.py \
   --cold-start-threshold-seconds <실측값> \
   --vault-dir ./vaults/<run명> \
   --log-path ./logs/<run명>/verdict_log.jsonl \
+  --criteria-path <라벨링 기준 문서 경로> \
+  --no-labels \
   --schedule-seed <시드>
 ```
 
@@ -66,6 +68,8 @@ python3 run_pilot.py \
   --log-path /tmp/layered-wiki-dryrun/verdict_log.jsonl \
   --modes all_layers \
   --schedule-seed 1 \
+  --criteria-path <라벨링 기준 문서 경로> \
+  --no-labels \
   --client fake
 ```
 

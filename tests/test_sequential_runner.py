@@ -12,6 +12,10 @@ from runner.types import ConditionCellState, InputDoc
 from vault.types import DocumentRecord
 
 
+# RunConfig.criteria_sha256 픽스처 값 - 픽스처일 뿐이며 규칙과 무관하다
+FIXTURE_CRITERIA_SHA256 = "0" * 64
+
+
 def _fake_backend(Texts: list[str]) -> list[list[float]]:
   return [[1.0, 0.0] for _ in Texts]
 
@@ -66,7 +70,9 @@ def _build_cell_state(condition: str, mode: str) -> ConditionCellState:
   return ConditionCellState(
     vault=InMemoryVaultStore(),
     retriever=Retriever(embed_backend=_fake_backend),
-    run_config=RunConfig(condition=condition, mode=mode, k=4, model_id="fake"),
+    run_config=RunConfig(
+      condition=condition, mode=mode, k=4, model_id="fake", criteria_sha256=FIXTURE_CRITERIA_SHA256, labels_sha256=None
+    ),
   )
 
 
@@ -141,7 +147,11 @@ class SequentialRunnerTest(unittest.TestCase):
     SpyForSplit = SpyRetriever()
     CellSplit = ConditionCell(condition=Condition.B0, mode="split_by_layer", k=4)
     StateSplit = ConditionCellState(
-      vault=InMemoryVaultStore(), retriever=SpyForSplit, run_config=RunConfig(condition="B0", mode="split_by_layer", k=4, model_id="fake")
+      vault=InMemoryVaultStore(),
+      retriever=SpyForSplit,
+      run_config=RunConfig(
+        condition="B0", mode="split_by_layer", k=4, model_id="fake", criteria_sha256=FIXTURE_CRITERIA_SHA256, labels_sha256=None
+      ),
     )
     run(
       Docs=[Doc],
@@ -157,7 +167,11 @@ class SequentialRunnerTest(unittest.TestCase):
     SpyForAll = SpyRetriever()
     CellAll = ConditionCell(condition=Condition.B0, mode="all_layers", k=4)
     StateAll = ConditionCellState(
-      vault=InMemoryVaultStore(), retriever=SpyForAll, run_config=RunConfig(condition="B0", mode="all_layers", k=4, model_id="fake")
+      vault=InMemoryVaultStore(),
+      retriever=SpyForAll,
+      run_config=RunConfig(
+        condition="B0", mode="all_layers", k=4, model_id="fake", criteria_sha256=FIXTURE_CRITERIA_SHA256, labels_sha256=None
+      ),
     )
     run(
       Docs=[Doc],
