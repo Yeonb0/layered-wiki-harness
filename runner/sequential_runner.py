@@ -90,7 +90,8 @@ def _process_one(
   ProcessingTimeSeconds = EndedAt - StartedAt
   cold_start_detector.record_call_end(EndedAt)
 
-  Validation = validate_outputs(Result, mode=cell.mode, caller_layer=CallerLayer, source_layer=doc.source_layer)
+  # candidates 전달 - 러너가 판정에 쓴 후보 목록을 이미 들고 있으므로 그대로 넘긴다
+  Validation = validate_outputs(Result, mode=cell.mode, caller_layer=CallerLayer, candidates=Candidates, source_layer=doc.source_layer)
 
   if Validation.valid and Validation.verdict is not None:
     Record = DocumentRecord(

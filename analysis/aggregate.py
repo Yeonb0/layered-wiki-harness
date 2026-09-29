@@ -1,9 +1,7 @@
 import json
 from typing import Any
 
-# 확정 결정 2026-09-26 - 층별 분리 모드 무효 판정의 분류 규칙
-MODE_RULE_CODES = {"layer_above_source_under_split_by_layer"}
-DECISION_VIOLATION_CODES = {"layer_below_source"}
+from verdictlog.problem_codes import PROBLEM_CODE_CLASSIFICATION
 
 
 def load_log(path: str) -> list[dict[str, Any]]:
@@ -89,11 +87,17 @@ def validation_breakdown(Entries: list[dict[str, Any]]) -> dict[str, Any]:
       WorkflowFailureNumerator = 0
       for Entry in TrialEntries:
         Problems = Entry.get("validation_problems") or []
-        if any(Code in MODE_RULE_CODES for Code in Problems):
+        Classifications = set()
+        for Code in Problems:
+          if Code not in PROBLEM_CODE_CLASSIFICATION:
+            # 등록되지 않은 코드가 스키마 오류로 조용히 떨어지면 결정 위반이 스키마 오류에 섞인다
+            raise ValueError(f"등록되지 않은 problem 코드 {Code!r}")
+          Classifications.add(PROBLEM_CODE_CLASSIFICATION[Code])
+        if "mode_rule_rejection" in Classifications:
           ModeRuleNumerator += 1
-        if any(Code in DECISION_VIOLATION_CODES for Code in Problems):
+        if "decision_violation" in Classifications:
           DecisionNumerator += 1
-        if any(Code not in MODE_RULE_CODES and Code not in DECISION_VIOLATION_CODES for Code in Problems):
+        if "schema_error" in Classifications:
           SchemaNumerator += 1
         if Entry.get("ok") is False:
           WorkflowFailureNumerator += 1

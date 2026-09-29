@@ -148,6 +148,43 @@ class ValidationBreakdownTest(unittest.TestCase):
     self.assertEqual(Cell["workflow_failure_rate"]["mean"], 0.5)
     self.assertEqual(Cell["workflow_failure_rate"]["n_trials"], 1)
 
+  def test_unregistered_problem_code_raises(self) -> None:
+    # 등록되지 않은 코드가 스키마 오류로 조용히 떨어지면 결정 위반이 스키마 오류에 섞인다
+    Entries = [
+      {
+        "condition": "B0", "mode": "split_by_layer", "k": 4, "trial_id": "t1",
+        "validation_problems": ["no_such_code"],
+      },
+    ]
+    with self.assertRaises(ValueError):
+      validation_breakdown(Entries)
+
+  def test_link_decision_violation_codes_count_as_decision_violation(self) -> None:
+    Entries = [
+      {
+        "condition": "B0", "mode": "split_by_layer", "k": 4, "trial_id": "t1",
+        "validation_problems": ["upward_link_target_below_verdict_layer"],
+      },
+      {
+        "condition": "B0", "mode": "split_by_layer", "k": 4, "trial_id": "t1",
+        "validation_problems": ["downward_link_target_same_layer"],
+      },
+    ]
+    Trial = self._cell(Entries)["trials"]["t1"]
+    self.assertEqual(Trial["decision_violation"], {"numerator": 2, "denominator": 2})
+    self.assertEqual(Trial["schema_error"]["numerator"], 0)
+
+  def test_link_not_in_candidates_code_counts_as_schema_error(self) -> None:
+    Entries = [
+      {
+        "condition": "B0", "mode": "split_by_layer", "k": 4, "trial_id": "t1",
+        "validation_problems": ["upward_link_target_not_in_candidates"],
+      },
+    ]
+    Trial = self._cell(Entries)["trials"]["t1"]
+    self.assertEqual(Trial["schema_error"], {"numerator": 1, "denominator": 1})
+    self.assertEqual(Trial["decision_violation"]["numerator"], 0)
+
 
 if __name__ == "__main__":
   unittest.main()
