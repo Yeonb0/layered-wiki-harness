@@ -1,4 +1,4 @@
-"""세그먼트 · 제외 규칙 v1 테스트
+"""세그먼트 · 제외 규칙 v1.1 테스트
 
 아래 문서 · 이름 · 속성 값은 전부 합성 픽스처일 뿐이며 규칙과 무관하다
 """
@@ -19,6 +19,7 @@ ID_C = "c" * 32
 ID_D = "d" * 32
 ID_E = "e" * 32
 ID_X = "f" * 32
+ID_F = "1" * 32
 
 
 def lines(text):
@@ -49,6 +50,22 @@ class TestBoundaries(unittest.TestCase):
   def test_heading_only_merges_forward_and_last_merges_backward(self):
     Body = lines("## P\n\n### A\na\n## Q")
     self.assertEqual(texts(sg.split_segments(Body)), ["## P\n### A\na\n## Q"])
+
+  def test_letterless_merges_forward(self):
+    Stats = collections.Counter()
+    Body = lines("---\n## A\na")
+    self.assertEqual(texts(sg.split_segments(Body, Stats)), ["---\n## A\na"])
+    self.assertEqual(Stats["letterless_merged"], 1)
+
+  def test_letterless_last_merges_backward(self):
+    Body = lines("## A\na\n## ★\n* * *")
+    self.assertEqual(texts(sg.split_segments(Body)), ["## A\na\n## ★\n* * *"])
+
+  def test_only_letterless_doc_has_no_segment(self):
+    self.assertEqual(sg.split_segments(lines("---\n\n***")), [])
+
+  def test_hangul_digit_counts_as_letter(self):
+    self.assertEqual(len(sg.split_segments(lines("1\n## 가\n가"))), 2)
 
   def test_trim_and_line_numbers(self):
     Body = lines("\n\n### A\na\n\n")
@@ -150,6 +167,9 @@ FILES = [
     f"1조/모음/제목 없음 {ID_E}_all.csv": "Name,Files & media\nx,y\n",
     f"1조/모음/제목 없음/소 {ID_E}.md": "# 소\n\nFiles & media: so.png",
     "1조/회의록/8차/Q.md": "# Q\n\n## 하나\n1\n## 둘\n2",
+    f"1조/과제/같은 제목 {ID_F}.md": "# 같은 제목\n본문",
+    "1조/과제/같은_제목.md": "# 같은 제목\n다른 판본",
+    "1조/다른폴더/같은_제목.md": "# 같은 제목\n폴더가 다름",
   }),
 ]
 
@@ -176,7 +196,11 @@ class TestRun(unittest.TestCase):
     self.assertEqual((att["layer"], att["group"], att["n_segments"]), ("팀", "1조", 2))
     self.assertTrue(att["doc_id"].startswith("att-"))
     self.assertEqual(Report["e1_matched"], 1)
-    self.assertEqual(Report["decoration_by_source"]["lecture_note"], {"banner": 1, "index": 1, "footer": 1})
+    self.assertEqual(Report["decoration_by_source"]["lecture_note"], {"banner": 1, "index": 1, "footer": 1, "heading_only_merged": 1})
+    self.assertEqual(Exc["1조/과제/같은_제목.md"], "E5_첨부중복")
+    self.assertIn(ID_F, Docs)
+    self.assertNotIn("1조/다른폴더/같은_제목.md", Exc)
+    self.assertEqual(Report["rules_version"], "segment_rules_v1.1")
 
   def test_zip_hash_mismatch_raises(self):
     with tempfile.TemporaryDirectory() as d:

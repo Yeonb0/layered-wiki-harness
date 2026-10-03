@@ -1,4 +1,4 @@
-"""세그먼트 · 제외 규칙 v1 ( docs/segment_rules_v1.md ) 구현
+"""세그먼트 · 제외 규칙 v1.1 ( docs/segment_rules_v1.md ) 구현
 
 코퍼스 원문은 로컬 전용 저장소에만 있다. 이 모듈은 공개 저장소에 있으므로
 페이지 본문 · 개인 페이지 주인 이름을 상수로 넣지 않는다 ( 주인 목록은 코퍼스 설정 파일 )
@@ -13,13 +13,15 @@ import os
 import re
 import zipfile
 
-RULES_VERSION = "segment_rules_v1"
+RULES_VERSION = "segment_rules_v1.1"
 
 PAGE_ID_RE = re.compile(r" ([0-9a-f]{32})\.md$")
 CSV_ALL_RE = re.compile(r" [0-9a-f]{32}_all\.csv$")
 HEADING_RE = re.compile(r"^#{1,3} ")
 FENCE_RE = re.compile(r"^\s*```")
 IMG_ALT_RE = re.compile(r"^\s*!\[([^\]]*)\]")
+# B7 글자 판정 ( 한글 · 영문 · 숫자 )
+LETTER_RE = re.compile(r"[0-9A-Za-z\uac00-\ud7a3\u3131-\u318e]")
 
 # P3 장식, 15단계 빈도 근거
 BANNER_ALT = "하얀리본라인3.png"
@@ -163,8 +165,10 @@ def trim(Seg):
   return Seg
 
 
-def split_segments(Body):
-  """B1 ~ B6. 세그먼트별 (줄 번호, 원문) 목록의 목록"""
+def split_segments(Body, Stats=None):
+  """B1 ~ B7. 세그먼트별 (줄 번호, 원문) 목록의 목록"""
+  if Stats is None:
+    Stats = collections.Counter()
   Flags = heading_flags(Body)
   Raw = [[]]
   for (ln, text), is_head in zip(Body, Flags):
@@ -176,11 +180,15 @@ def split_segments(Body):
   def heading_only(s):
     return len([1 for _, t in s if t.strip()]) == 1 and bool(HEADING_RE.match(s[0][1]))
 
-  # B4 헤딩만 있는 세그먼트는 다음 세그먼트 앞에, 마지막이면 직전 세그먼트 끝에
+  def letterless(s):
+    return not any(LETTER_RE.search(t) for _, t in s)
+
+  # B4 헤딩만 있는 세그먼트, B7 글자 없는 세그먼트는 다음 세그먼트 앞에, 마지막이면 직전 세그먼트 끝에
   Merged = []
   Carry = []
   for s in Segs:
-    if heading_only(s):
+    if heading_only(s) or letterless(s):
+      Stats["heading_only_merged" if heading_only(s) else "letterless_merged"] += 1
       Carry += s
       continue
     Merged.append(Carry + s)
@@ -188,8 +196,9 @@ def split_segments(Body):
   if Carry:
     if Merged:
       Merged[-1] = Merged[-1] + Carry
-    else:
+    elif not letterless(Carry):
       Merged.append(Carry)
+    # 남은 것이 전부 글자 없는 줄이면 세그먼트 없음 ( E4 )
   return Merged
 
 
@@ -214,7 +223,7 @@ def process_doc(raw_text, Prop_keys, Stats):
   Lines = list(enumerate(raw_text.splitlines(), 1))
   Body, title, Props = split_title_and_properties(Lines, Prop_keys)
   Body = strip_decorations(Body, Stats)
-  return title, Props, split_segments(Body)
+  return title, Props, split_segments(Body, Stats)
 
 
 def run(corpus_root, out_dir):
@@ -240,6 +249,7 @@ def run(corpus_root, out_dir):
       raise ValueError(f"zip 해시 불일치 {F['path']}")
     with zipfile.ZipFile(zpath) as zf:
       Keys = db_property_keys(zf)
+      Pending = []
       for path in sorted(n for n in zf.namelist() if n.lower().endswith(".md")):
         doc_id = doc_id_for(path)
         if doc_id in Seen_docs:
@@ -253,6 +263,14 @@ def run(corpus_root, out_dir):
         title, Props, Segs = process_doc(raw, Keys.get(os.path.dirname(path)), Stats[source])
         if not Segs:
           Excluded.append({"doc_id": doc_id, "source": source, "path": path, "reason": "E4_빈문서"})
+          continue
+        Pending.append((doc_id, path, raw, title, Props, Segs))
+
+      # E5 같은 폴더에 title 이 같은 Notion 페이지가 있는 첨부 md
+      Page_titles = {(os.path.dirname(p), t) for d, p, _, t, _, _ in Pending if not d.startswith("att-") and t is not None}
+      for doc_id, path, raw, title, Props, Segs in Pending:
+        if doc_id.startswith("att-") and title is not None and (os.path.dirname(path), title) in Page_titles:
+          Excluded.append({"doc_id": doc_id, "source": source, "path": path, "reason": "E5_첨부중복"})
           continue
         layer, group = source_layer(source, path, Owners)
         Docs.append({
