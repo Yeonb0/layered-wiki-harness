@@ -1,0 +1,30 @@
+{
+  "snapshot": 1,
+  "corpus_repo": "로컬 전용 저장소 ~/layered-wiki-corpus ( 원격 없음, 팀원 개인 페이지 원문 포함이라 공개하지 않음 )",
+  "corpus_commit": "4268932d4b76fae5332101d26a8e1d163db27ee7",
+  "export_time_basis": "zip 최상위 엔트리 시각의 최댓값. 시간대 표기는 없으나 UTC 로 판단 ( Windows 다운로드 mtime 15:18 ~ 15:21 KST 와 정합 )",
+  "selection_rule_sha256": "8f6dc88f4d82df5921a57668ae91230b5a29f1473c2c626d44aec4aab7ba2471",
+  "files": [
+    {
+      "source": "lecture_note",
+      "path": "raw/6b57c248-c316-4be9-adcd-8f8d5f3d5df4_ExportBlock-c95ea4b0-93a5-4783-ae9a-ce2e108cd77b.zip",
+      "bytes": 14062317,
+      "sha256": "33ea5a174894f3b6be778e292f73a63ac152bab6fa1989035f9eeacb86fecafa",
+      "export_time_utc": "2026-10-02T06:21:22Z"
+    },
+    {
+      "source": "team_1jo",
+      "path": "raw/bc8de6c1-4113-4f28-b93b-8a6e2f4b4b30_ExportBlock-98b107a1-6d9e-4ea5-aadd-fa025a57d820.zip",
+      "bytes": 198520213,
+      "sha256": "6dc35dba7443a83cb3541f29db7d402431c47d7247793b2f20152f54adcfc6c4",
+      "export_time_utc": "2026-10-02T06:18:42Z"
+    },
+    {
+      "source": "team_soft_eng",
+      "path": "raw/eee5bd41-73e4-4502-b55d-750c57f346ee_ExportBlock-c8f34f71-100d-4587-9600-e234e639be79.zip",
+      "bytes": 28617170,
+      "sha256": "23490a82314abe81bb2510167cd7cd0afbf4f15838642eff7c3f3ecddb07cf72",
+      "export_time_utc": "2026-10-02T06:19:26Z"
+    }
+  ]
+}

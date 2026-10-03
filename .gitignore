@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .env
 data/
+
+# 코퍼스 원문은 ~/layered-wiki-corpus ( 로컬 전용, 원격 없음 ) 에만 둔다, 공개 저장소 유입 방지
+*_ExportBlock-*.zip
