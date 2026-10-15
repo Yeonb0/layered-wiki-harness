@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest import mock
 
-from retrieval.embeddings import EMBEDDING_ENDPOINT_ENV, embed, embed_batch
+from retrieval.embeddings import EMBED_MAX_CHARS, EMBEDDING_ENDPOINT_ENV, embed, embed_batch
 
 
 def _synthetic_backend(Texts: list[str]) -> list[list[float]]:
@@ -40,6 +40,38 @@ class EmbeddingsEndpointTest(unittest.TestCase):
     with mock.patch.dict(os.environ, {EMBEDDING_ENDPOINT_ENV: "http://127.0.0.1:0/v1/embeddings"}), mock.patch("requests.post", return_value=Response):
       with self.assertRaises(ValueError):
         embed("x")
+
+
+class EmbeddingsTruncationTest(unittest.TestCase):
+  # 픽스처일 뿐이며 규칙과 무관하다
+  def _post_body(self, Texts: list[str]) -> dict:
+    Response = mock.Mock()
+    Response.json.return_value = {"data": [{"index": Index, "embedding": [1.0]} for Index in range(len(Texts))]}
+    with mock.patch.dict(os.environ, {EMBEDDING_ENDPOINT_ENV: "http://127.0.0.1:0/v1/embeddings"}), mock.patch("requests.post", return_value=Response) as Post:
+      embed_batch(Texts)
+    return Post.call_args.kwargs["json"]
+
+  def test_text_over_limit_is_cut_to_limit_in_request_body(self) -> None:
+    Body = self._post_body(["가" * (EMBED_MAX_CHARS + 500)])
+    self.assertEqual(Body["input"], ["가" * EMBED_MAX_CHARS])
+
+  def test_text_within_limit_is_sent_as_is(self) -> None:
+    Short = "나" * EMBED_MAX_CHARS
+    Body = self._post_body(["짧은 글", Short])
+    self.assertEqual(Body["input"], ["짧은 글", Short])
+
+  def test_limit_is_4000(self) -> None:
+    self.assertEqual(EMBED_MAX_CHARS, 4000)
+
+  def test_injected_backend_also_receives_cut_text(self) -> None:
+    Seen = []
+
+    def Backend(Texts: list[str]) -> list[list[float]]:
+      Seen.extend(Texts)
+      return [[1.0] for _ in Texts]
+
+    embed_batch(["다" * (EMBED_MAX_CHARS + 1)], backend=Backend)
+    self.assertEqual(Seen, ["다" * EMBED_MAX_CHARS])
 
 
 if __name__ == "__main__":

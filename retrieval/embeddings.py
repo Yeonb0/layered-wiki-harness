@@ -7,6 +7,8 @@ import requests
 EMBEDDING_ENDPOINT_ENV = "LAYERED_WIKI_EMBED_ENDPOINT"
 EMBEDDING_MODEL = "bge-m3"
 DEFAULT_TIMEOUT_SECONDS = 30
+# bge-m3 서버 한 번 입력 8192 토큰 상한, 세그먼트 최대 15350자 · 노트 본문 연결 · B1 문서 단위 검색, 전 조건 공통
+EMBED_MAX_CHARS = 4000
 
 EmbedBackend = Callable[[list[str]], list[list[float]]]
 
@@ -17,7 +19,8 @@ def embed(text: str, backend: EmbedBackend | None = None) -> list[float]:
 
 def embed_batch(Texts: list[str], backend: EmbedBackend | None = None) -> list[list[float]]:
   Call = backend or _call_llama_server
-  return Call(Texts)
+  # 주입한 백엔드와 서버 호출이 같은 입력을 받도록 두 경로의 공통 지점에서 자른다
+  return Call([Text[:EMBED_MAX_CHARS] for Text in Texts])
 
 
 def _embedding_endpoint() -> str:

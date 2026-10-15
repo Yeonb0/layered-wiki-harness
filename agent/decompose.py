@@ -147,8 +147,11 @@ def parse_assignment(raw_text: str, LabelMap: dict, TextById: dict) -> list[Note
   # 최상위는 assign 과 titles 키를 가진 객체여야 한다
   if not isinstance(Parsed, dict) or "assign" not in Parsed or "titles" not in Parsed:
     raise DecompositionOutputError("assign 이나 titles 키가 없다")
-  Assign = Parsed["assign"]
-  Titles = Parsed["titles"]
+  return build_drafts_from_assignment(Parsed["assign"], Parsed["titles"], LabelMap, TextById)
+
+
+def build_drafts_from_assignment(Assign, Titles, LabelMap: dict, TextById: dict) -> list[NoteDraft]:
+  # 분해 호출과 B1 호출이 같은 검증 · 노트 구성을 쓰도록 JSON 파싱 뒤의 부분을 따로 둔다
   # assign 은 객체, titles 는 문자열 목록이어야 한다
   if not isinstance(Assign, dict):
     raise DecompositionOutputError("assign 이 객체가 아니다")
