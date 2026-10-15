@@ -31,6 +31,10 @@ def _parse_call_output(raw_text: str, LabelMap: dict, TextById: dict):
   Notes = Parsed["notes"]
   if not isinstance(Assign, dict):
     raise DecompositionOutputError("assign 이 객체가 아니다")
+  # 지침 3 절 ValueError 가 notes 개수 같은 형식 실패에 묻히지 않게 개수 검사보다 먼저 본다
+  Unknown = [Label for Label in Assign if Label not in LabelMap]
+  if Unknown:
+    raise ValueError(f"표지에 없는 assign 키: {Unknown}")
   if not isinstance(Notes, list) or not all(isinstance(Note, dict) for Note in Notes):
     raise DecompositionOutputError("notes 가 객체 목록이 아니다")
   # 번호 값이 목록 같은 것이면 집합을 만들 수 없다 - 번호 검사는 build_drafts_from_assignment 가 한다
@@ -71,7 +75,10 @@ def run_b1_doc(
 
   # B1 은 문서 단위로 한 번 검색한다 - 층별 분리 모드만 출처 층 이상으로 제한한다
   CallerLayer = doc.source_layer if mode == "split_by_layer" else None
-  Candidates = retriever.search(doc.title + "\n" + Shown, k, mode, CallerLayer)
+  # 호출이 실패한 문서도 볼트 크기를 로그에 남겨 순차 성장 곡선에서 재집계할 수 있게 검색 직전에 잡는다
+  CallVaultSize = len(VaultNotes)
+  # 질의는 Shown 하나로 한다 - Shown 이 이미 "제목 : ..." 으로 시작해 제목이 두 번 들어간다
+  Candidates = retriever.search(Shown, k, mode, CallerLayer)
   Messages = build_b1_messages(layer_block, mode, doc.source_layer, Shown, Labels, Candidates)
   require_block_in_messages(Messages, layer_block)
   Result = chat_fn(
@@ -93,6 +100,7 @@ def run_b1_doc(
   Log.append(_entry(BaseLog, {
     "entry_type": "b1_call",
     "doc_id": doc.doc_id,
+    "vault_size_before": CallVaultSize,
     "source_layer": doc.source_layer,
     "source_group": doc.source_group,
     "doc_view_sha256": hashlib.sha256(Shown.encode("utf-8")).hexdigest(),

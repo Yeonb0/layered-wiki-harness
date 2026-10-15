@@ -81,6 +81,8 @@ def run_propose_doc(
   Labels = list(LabelMap)
   Messages = build_decompose_messages(layer_block, doc.source_layer, Shown, Labels)
   require_block_in_messages(Messages, layer_block)
+  # 호출이 실패한 문서도 볼트 크기를 로그에 남겨 조건 간 로그 필드를 맞춘다 ( B1 의 b1_call 과 같은 키 )
+  DecomposeVaultSize = len(VaultNotes)
   Result = chat_fn(Messages, model_id, decompose_config, assign_schema(Labels), timeout_seconds=timeout_seconds)
 
   Drafts = []
@@ -97,6 +99,7 @@ def run_propose_doc(
   Log.append(_entry(BaseLog, {
     "entry_type": "decompose",
     "doc_id": doc.doc_id,
+    "vault_size_before": DecomposeVaultSize,
     "source_layer": doc.source_layer,
     "source_group": doc.source_group,
     "doc_view_sha256": hashlib.sha256(Shown.encode("utf-8")).hexdigest(),

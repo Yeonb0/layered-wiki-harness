@@ -4,8 +4,10 @@ import unittest
 from agent.b1 import run_b1_doc
 from agent.llm_client import ChatResult, GenerationConfig
 from agent.prompts import b1_schema, build_b1_messages, build_place_messages, layer_rule_sentence, place_schema, assign_schema
+from agent.decompose import build_segment_labels
 from agent.types import SourceDoc, SourceSegment
 from retrieval.search import LAYER_ORDER, Retriever
+from vault.types import DocumentRecord
 
 # 픽스처일 뿐이며 규칙과 무관하다 - 합성 값이다
 _BLOCK = "합성 층 정의 블록\n- 합성 조항"
@@ -67,9 +69,24 @@ def _output(Notes=None, Assign=None) -> dict:
   }
 
 
-def _run(Chat, mode="all_layers", Retr=None, Doc=_DOC):
+class SpyRetriever(Retriever):
+  # search 를 감싸 질의와 caller_layer 를 기록한다
+  def __init__(self, embed_backend) -> None:
+    super().__init__(embed_backend=embed_backend)
+    self.Searches = []
+
+  def search(self, query, k, mode, caller_layer):
+    self.Searches.append({"query": query, "caller_layer": caller_layer})
+    return super().search(query, k, mode, caller_layer)
+
+
+def _record(Id: str, Layer: str) -> DocumentRecord:
+  return DocumentRecord(id=Id, layer=Layer, title=f"{Id} 제목", body=f"{Id} 본문", upward_links=[], downward_conditional_links=[], inserted_at_vault_size=0)
+
+
+def _run(Chat, mode="all_layers", Retr=None, Doc=_DOC, VaultNotes=None):
   Retr = Retr or Retriever(embed_backend=_embed_backend)
-  VaultNotes = []
+  VaultNotes = [] if VaultNotes is None else VaultNotes
   LayerGroupById = {}
   Log = run_b1_doc(
     Doc, mode, 4, Retr, VaultNotes, LayerGroupById, Chat, "합성모델", _CONFIG,
@@ -168,6 +185,55 @@ class RunB1DocTest(unittest.TestCase):
   def test_unknown_mode_raises_value_error(self) -> None:
     with self.assertRaises(ValueError):
       _run(FakeChat([]), mode="other_mode")
+
+
+class B1VaultSizeAndSearchTest(unittest.TestCase):
+  def test_vault_size_before_is_recorded_before_search_and_grows_per_note(self) -> None:
+    # 자리 채움 값으로 볼트를 미리 2개 채운다 - run_b1_doc 은 len 과 append 만 쓴다
+    Filled = ["자리1", "자리2"]
+    Log, VaultNotes, _, _ = _run(FakeChat([_result(_output())]), VaultNotes=Filled)
+    self.assertEqual(Log[0]["vault_size_before"], 2)
+    self.assertEqual(Log[1]["vault_size_before"], 2)
+    self.assertEqual(Log[2]["vault_size_before"], 3)
+    self.assertEqual(len(VaultNotes), 4)
+
+  def test_vault_size_before_is_in_b1_call_even_when_call_fails(self) -> None:
+    Log, _, _, _ = _run(FakeChat([_result(_output(), FinishReason="length")]), VaultNotes=["자리1", "자리2"])
+    self.assertEqual(len(Log), 1)
+    self.assertFalse(Log[0]["ok"])
+    self.assertEqual(Log[0]["vault_size_before"], 2)
+
+  def _spy_with_three_layers(self) -> SpyRetriever:
+    Retr = SpyRetriever(_embed_backend)
+    for Id, Layer in (("개인노트", "개인"), ("팀노트", "팀"), ("전사노트", "전사")):
+      Retr.add(_record(Id, Layer))
+    return Retr
+
+  def test_split_by_layer_search_uses_source_layer_as_caller_and_filters_lower(self) -> None:
+    Retr = self._spy_with_three_layers()
+    Log, _, _, _ = _run(FakeChat([_result(_output())]), mode="split_by_layer", Retr=Retr)
+    self.assertEqual({Cand["layer"] for Cand in Log[0]["candidates"]}, {"팀", "전사"})
+    self.assertEqual(len(Retr.Searches), 1)
+    self.assertEqual(Retr.Searches[0]["caller_layer"], "팀")
+
+  def test_all_layers_search_has_no_caller_layer_and_includes_personal(self) -> None:
+    Retr = self._spy_with_three_layers()
+    Log, _, _, _ = _run(FakeChat([_result(_output())]), mode="all_layers", Retr=Retr)
+    self.assertIn("개인", {Cand["layer"] for Cand in Log[0]["candidates"]})
+    self.assertIsNone(Retr.Searches[0]["caller_layer"])
+
+  def test_search_query_is_shown_and_title_appears_once(self) -> None:
+    Retr = SpyRetriever(_embed_backend)
+    _run(FakeChat([_result(_output())]), Retr=Retr)
+    _, Shown = build_segment_labels(_DOC)
+    self.assertEqual(Retr.Searches[0]["query"], Shown)
+    self.assertEqual(Retr.Searches[0]["query"].count(_DOC.title), 1)
+
+  def test_unknown_label_with_notes_count_mismatch_raises_value_error(self) -> None:
+    Output = _output(Notes=[_note("노트1"), _note("노트2")], Assign={"S1": 1, "S2": 1, "S3": 1, "S9": 1})
+    with self.assertRaises(ValueError) as Ctx:
+      _run(FakeChat([_result(Output)]))
+    self.assertIn("표지에 없는 assign 키", str(Ctx.exception))
 
 
 class B1PromptAndSchemaTest(unittest.TestCase):

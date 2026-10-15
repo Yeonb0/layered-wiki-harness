@@ -227,6 +227,26 @@ class RunProposeDocTest(unittest.TestCase):
       for Key, Value in _BASE_LOG.items():
         self.assertEqual(Entry[Key], Value)
 
+  def test_decompose_entry_has_vault_size_before_on_success_and_failure(self) -> None:
+    Success, _, _, _ = _run(FakeChat([_result(_TWO_NOTES), _result(_place()), _result(_place())]))
+    self.assertEqual(Success[0]["vault_size_before"], 0)
+    Failure, _, _, _ = _run(FakeChat([_result(_TWO_NOTES, FinishReason="length")]))
+    self.assertFalse(Failure[0]["ok"])
+    self.assertEqual(Failure[0]["vault_size_before"], 0)
+
+  def test_decompose_vault_size_before_is_size_just_before_call(self) -> None:
+    # 자리 채움 값으로 볼트를 미리 2개 채운다 - run_propose_doc 은 len 과 append 만 쓴다
+    for Chat, Ok in (
+      (FakeChat([_result(_TWO_NOTES), _result(_place()), _result(_place())]), True),
+      (FakeChat([_result(_TWO_NOTES, FinishReason="length")]), False),
+    ):
+      Log = run_propose_doc(
+        _DOC, "all_layers", 4, Retriever(embed_backend=_embed_backend), ["자리1", "자리2"], {}, Chat, "합성모델", _CONFIG,
+        _CONFIG, _BLOCK, _BLOCK_SHA, _OWNERS, 9, _BASE_LOG,
+      )
+      self.assertEqual(Log[0]["ok"], Ok)
+      self.assertEqual(Log[0]["vault_size_before"], 2)
+
   def test_base_log_key_collision_raises_value_error(self) -> None:
     Retr = Retriever(embed_backend=_embed_backend)
     with self.assertRaises(ValueError):
