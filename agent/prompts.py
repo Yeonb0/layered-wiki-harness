@@ -28,6 +28,29 @@ def decompose_schema(Labels: list[str]) -> dict:
   }
 
 
+def assign_schema(Labels: list[str]) -> dict:
+  # 표지가 없으면 assign 이 비어 어떤 출력도 의미가 없다
+  if not Labels:
+    raise ValueError("Labels 가 비어 있다")
+  Count = len(Labels)
+  # 105단계에서 프롬프트 규칙으로는 표지 겹침을 막지 못함 - 표지마다 번호 하나라 겹침 · 없는 표지가 형식상 불가능
+  # ( 사용자 결정 (가) 겹침 금지 · 빠짐없이 )
+  return {
+    "type": "object",
+    "properties": {
+      "assign": {
+        "type": "object",
+        "properties": {Label: {"type": "integer", "minimum": 1, "maximum": Count} for Label in Labels},
+        "required": list(Labels),
+        "additionalProperties": False,
+      },
+      # 제목은 짧은 구라서 상한을 두어 반복 출력이 끝없이 이어지는 것을 막는다
+      "titles": {"type": "array", "minItems": 1, "maxItems": Count, "items": {"type": "string", "maxLength": 60}},
+    },
+    "required": ["assign", "titles"],
+  }
+
+
 def _check_mode_and_layer(mode: str, source_layer: str) -> None:
   # mode 는 두 값뿐 - 다른 값은 층 규칙 문구를 정할 수 없다
   if mode not in MODES:
@@ -77,8 +100,8 @@ def build_decompose_messages(layer_block: str, source_layer: str, shown: str, La
     "규칙",
     "1. 입력 문서의 세그먼트 표지 [S1], [S2] … 를 묶어 노트를 만든다. 노트 하나는 하나의 개념 · 결정 · 기록을 다룬다.",
     "2. 층 성격 ( 개인 · 팀 · 전사 ) 이 다른 세그먼트는 같은 노트에 묶지 않는다.",
-    f"3. 모든 노트는 입력에 있는 표지 ( {Labels[0]} ~ {Labels[-1]} ) 를 1개 이상 가진다. 다른 표지는 쓰지 않는다. 표지 하나는 노트 하나에만 넣는다.",
-    "4. 노트 제목은 내용을 요약한 짧은 한국어 구로 쓴다.",
+    f"3. assign 에는 표지 ( {Labels[0]} ~ {Labels[-1]} ) 마다 노트 번호를 하나씩 적는다. 번호는 1 부터 쓰고, 같은 노트에 묶을 표지는 같은 번호를 쓴다.",
+    "4. titles 에는 노트 번호 순서대로 노트 제목을 짧은 한국어 구로 쓴다.",
     "5. JSON 만 출력한다.",
   ])
   User = f"출처 층 : {source_layer}\n\n{shown}"

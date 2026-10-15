@@ -1,11 +1,12 @@
 import json
 import unittest
 
-from agent.decompose import DecompositionOutputError, parse_grouping
+from agent.decompose import DecompositionOutputError, parse_assignment, parse_grouping
 from agent.llm_client import ChatResult, GenerationConfig
 from agent.prompts import (
   build_decompose_messages,
   build_place_messages,
+  assign_schema,
   decompose_schema,
   place_schema,
   require_block_in_messages,
@@ -78,14 +79,16 @@ def _run(Chat, mode="all_layers", Doc=_DOC):
   return Log, VaultNotes, LayerGroupById, Retr
 
 
-_TWO_NOTES = {"notes": [{"title": "노트1", "segments": ["S2", "S1"]}, {"title": "노트2", "segments": ["S3"]}]}
+_GROUPING_TWO_NOTES = {"notes": [{"title": "노트1", "segments": ["S2", "S1"]}, {"title": "노트2", "segments": ["S3"]}]}
+_TWO_NOTES = {"assign": {"S1": 1, "S2": 1, "S3": 2}, "titles": ["노트1", "노트2"]}
+_ONE_NOTE = {"assign": {"S1": 1, "S2": 1, "S3": 1}, "titles": ["노트1"]}
 
 
 class ParseGroupingTest(unittest.TestCase):
   def test_body_is_segment_texts_in_seq_order(self) -> None:
     LabelMap = {"S1": "세그A", "S2": "세그B", "S3": "세그C"}
     TextById = {"세그A": "첫째 글", "세그B": "둘째 글", "세그C": "셋째 글"}
-    Drafts = parse_grouping(json.dumps(_TWO_NOTES, ensure_ascii=False), LabelMap, TextById)
+    Drafts = parse_grouping(json.dumps(_GROUPING_TWO_NOTES, ensure_ascii=False), LabelMap, TextById)
     self.assertEqual(Drafts[0].source_segment_ids, ["세그A", "세그B"])
     self.assertEqual(Drafts[0].body, "첫째 글\n\n둘째 글")
     self.assertEqual(Drafts[1].body, "셋째 글")
@@ -135,7 +138,7 @@ class RunProposeDocTest(unittest.TestCase):
     self.assertEqual(VaultNotes[1].upward_links, ["문서A#n0"])
 
   def test_split_by_layer_schema_enum_and_prompt_rule(self) -> None:
-    Chat = FakeChat([_result({"notes": [{"title": "노트1", "segments": ["S1"]}]}), _result(_place())])
+    Chat = FakeChat([_result(_ONE_NOTE), _result(_place())])
     _run(Chat, mode="split_by_layer")
     Enum = Chat.Calls[1]["schema"]["properties"]["layer"]["enum"]
     self.assertEqual(Enum, ["개인", "팀"])
@@ -145,7 +148,7 @@ class RunProposeDocTest(unittest.TestCase):
     self.assertEqual(place_schema("all_layers", "팀", [])["properties"]["layer"]["enum"], LAYER_ORDER)
 
   def test_split_by_layer_layer_above_source_raises_value_error(self) -> None:
-    Chat = FakeChat([_result({"notes": [{"title": "노트1", "segments": ["S1"]}]}), _result(_place(Layer="전사"))])
+    Chat = FakeChat([_result(_ONE_NOTE), _result(_place(Layer="전사"))])
     with self.assertRaises(ValueError):
       _run(Chat, mode="split_by_layer")
 
@@ -162,22 +165,33 @@ class RunProposeDocTest(unittest.TestCase):
     self.assertIn("JSON 이 아니다", Log[0]["error"])
     self.assertEqual(VaultNotes, [])
 
-  def test_overlapping_labels_are_recorded_as_decompose_failure(self) -> None:
-    Overlap = {"notes": [{"title": "노트1", "segments": ["S1", "S2"]}, {"title": "노트2", "segments": ["S2", "S3"]}]}
-    Log, VaultNotes, _, _ = _run(FakeChat([_result(Overlap)]))
+  def test_missing_label_is_recorded_as_decompose_failure(self) -> None:
+    Missing = {"assign": {"S1": 1, "S2": 1}, "titles": ["노트1"]}
+    Log, VaultNotes, _, _ = _run(FakeChat([_result(Missing)]))
     self.assertEqual(len(Log), 1)
     self.assertFalse(Log[0]["ok"])
-    self.assertIn("표지가 두 노트 이상에 있다", Log[0]["error"])
+    self.assertIn("assign 에 빠진 표지", Log[0]["error"])
     self.assertEqual(VaultNotes, [])
 
-  def test_decompose_system_message_has_one_note_per_label_rule(self) -> None:
+  def test_notes_are_built_from_assign_without_overlap(self) -> None:
+    Chat = FakeChat([_result(_TWO_NOTES), _result(_place()), _result(_place())])
+    Log, VaultNotes, _, _ = _run(Chat)
+    Used = [SegId for Note in VaultNotes for SegId in Note.source_segment_ids]
+    self.assertEqual(sorted(Used), ["세그A", "세그B", "세그C"])
+    self.assertEqual(len(Used), len(set(Used)))
+    self.assertEqual([Entry["title"] for Entry in Log[0]["notes"]], ["노트1", "노트2"])
+
+  def test_decompose_system_message_has_assign_and_titles_rules(self) -> None:
     Chat = FakeChat([_result(_TWO_NOTES), _result(_place()), _result(_place())])
     _run(Chat)
-    self.assertIn("표지 하나는 노트 하나에만 넣는다.", Chat.Calls[0]["messages"][0]["content"])
+    Content = Chat.Calls[0]["messages"][0]["content"]
+    self.assertIn("3. assign 에는 표지 ( S1 ~ S3 ) 마다 노트 번호를 하나씩 적는다.", Content)
+    self.assertIn("4. titles 에는 노트 번호 순서대로 노트 제목을 짧은 한국어 구로 쓴다.", Content)
 
-  def test_decompose_empty_segments_raises_value_error(self) -> None:
+  def test_decompose_unknown_label_in_assign_raises_value_error(self) -> None:
+    Unknown = {"assign": {"S1": 1, "S2": 1, "S3": 1, "S9": 1}, "titles": ["노트1"]}
     with self.assertRaises(ValueError):
-      _run(FakeChat([_result({"notes": [{"title": "노트1", "segments": []}]})]))
+      _run(FakeChat([_result(Unknown)]))
 
   def test_place_link_error_fails_only_that_note(self) -> None:
     Chat = FakeChat([_result(_TWO_NOTES), _result(_place(Up=["없는-id"])), _result(_place())])
@@ -245,15 +259,80 @@ class DecomposeSchemaTest(unittest.TestCase):
 
   def test_rule_three_mentions_label_range(self) -> None:
     Messages = build_decompose_messages(_BLOCK, "팀", "보임", ["S1", "S2", "S3"])
-    self.assertIn("3. 모든 노트는 입력에 있는 표지 ( S1 ~ S3 ) 를 1개 이상 가진다. 다른 표지는 쓰지 않는다.", Messages[0]["content"])
+    self.assertIn("3. assign 에는 표지 ( S1 ~ S3 ) 마다 노트 번호를 하나씩 적는다. 번호는 1 부터 쓰고, 같은 노트에 묶을 표지는 같은 번호를 쓴다.", Messages[0]["content"])
 
   def test_run_propose_doc_passes_document_labels_to_decompose_call(self) -> None:
     Chat = FakeChat([_result(_TWO_NOTES), _result(_place()), _result(_place())])
     _run(Chat)
-    Segments = Chat.Calls[0]["schema"]["properties"]["notes"]["items"]["properties"]["segments"]
-    self.assertEqual(Segments["items"]["enum"], ["S1", "S2", "S3"])
-    self.assertEqual(Chat.Calls[0]["schema"]["properties"]["notes"]["maxItems"], 3)
+    Schema = Chat.Calls[0]["schema"]
+    self.assertEqual(Schema, assign_schema(["S1", "S2", "S3"]))
+    self.assertEqual(Schema["properties"]["assign"]["required"], ["S1", "S2", "S3"])
     self.assertIn("( S1 ~ S3 )", Chat.Calls[0]["messages"][0]["content"])
+
+
+class AssignSchemaTest(unittest.TestCase):
+  def test_shape_follows_labels(self) -> None:
+    Schema = assign_schema(["S1", "S2", "S3"])
+    Assign = Schema["properties"]["assign"]
+    self.assertEqual(Schema["required"], ["assign", "titles"])
+    self.assertEqual(Assign["required"], ["S1", "S2", "S3"])
+    self.assertIs(Assign["additionalProperties"], False)
+    self.assertEqual(list(Assign["properties"]), ["S1", "S2", "S3"])
+    for Label in ("S1", "S2", "S3"):
+      self.assertEqual(Assign["properties"][Label], {"type": "integer", "minimum": 1, "maximum": 3})
+    Titles = Schema["properties"]["titles"]
+    self.assertEqual(Titles, {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string", "maxLength": 60}})
+
+  def test_empty_labels_raises_value_error(self) -> None:
+    with self.assertRaises(ValueError):
+      assign_schema([])
+
+
+class ParseAssignmentTest(unittest.TestCase):
+  def setUp(self) -> None:
+    self.LabelMap = {"S1": "세그A", "S2": "세그B", "S3": "세그C"}
+    self.TextById = {"세그A": "첫째 글", "세그B": "둘째 글", "세그C": "셋째 글"}
+
+  def _parse(self, Assign, Titles):
+    return parse_assignment(json.dumps({"assign": Assign, "titles": Titles}, ensure_ascii=False), self.LabelMap, self.TextById)
+
+  def test_valid_output_gives_notes_in_number_order_with_seq_ordered_body(self) -> None:
+    # assign 키 순서를 일부러 뒤섞어 seq 순서로 이어지는지 본다
+    Drafts = self._parse({"S3": 1, "S1": 2, "S2": 2}, ["가", "나"])
+    self.assertEqual([Draft.title for Draft in Drafts], ["가", "나"])
+    self.assertEqual(Drafts[0].source_segment_ids, ["세그C"])
+    self.assertEqual(Drafts[0].body, "셋째 글")
+    self.assertEqual(Drafts[1].source_segment_ids, ["세그A", "세그B"])
+    self.assertEqual(Drafts[1].body, "첫째 글\n\n둘째 글")
+
+  def test_unknown_label_raises_value_error(self) -> None:
+    with self.assertRaises(ValueError) as Ctx:
+      self._parse({"S1": 1, "S2": 1, "S3": 1, "S9": 1}, ["가"])
+    self.assertNotIsInstance(Ctx.exception, DecompositionOutputError)
+
+  def test_format_errors_raise_output_error(self) -> None:
+    Cases = {
+      "missing_label": ({"S1": 1, "S2": 1}, ["가"]),
+      "number_out_of_range_high": ({"S1": 1, "S2": 1, "S3": 3}, ["가", "나"]),
+      "number_out_of_range_low": ({"S1": 0, "S2": 1, "S3": 1}, ["가"]),
+      "skipped_number": ({"S1": 1, "S2": 1, "S3": 3}, ["가", "나", "다"]),
+      "title_without_label": ({"S1": 1, "S2": 1, "S3": 1}, ["가", "나"]),
+      "empty_title": ({"S1": 1, "S2": 2, "S3": 2}, ["가", ""]),
+      "not_integer": ({"S1": "1", "S2": 1, "S3": 1}, ["가"]),
+      "bool_number": ({"S1": True, "S2": 1, "S3": 1}, ["가"]),
+      "empty_titles": ({"S1": 1, "S2": 1, "S3": 1}, []),
+    }
+    for Name, (Assign, Titles) in Cases.items():
+      with self.subTest(Name):
+        with self.assertRaises(DecompositionOutputError):
+          self._parse(Assign, Titles)
+
+  def test_not_json_or_wrong_keys_raise_output_error(self) -> None:
+    for Raw in ("JSON 아님", json.dumps({"notes": []}), json.dumps({"assign": [], "titles": ["가"]}),
+                json.dumps({"assign": {}, "titles": "가"})):
+      with self.subTest(Raw):
+        with self.assertRaises(DecompositionOutputError):
+          parse_assignment(Raw, self.LabelMap, self.TextById)
 
 
 class PlaceSchemaTest(unittest.TestCase):

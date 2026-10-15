@@ -135,3 +135,56 @@ def parse_grouping(raw_text: str, LabelMap: dict, TextById: dict) -> list[NoteDr
     OverlappedLabels = [Label for Label in LabelMap if LabelMap[Label] in Overlapped]
     raise DecompositionOutputError(f"표지가 두 노트 이상에 있다: {OverlappedLabels}")
   return Drafts
+
+
+def parse_assignment(raw_text: str, LabelMap: dict, TextById: dict) -> list[NoteDraft]:
+  # 모델은 표지마다 노트 번호 하나와 노트 제목만 낸다 - 겹침 · 빠짐은 형식상 불가능하거나 출력 오류로 걸러진다
+  try:
+    Parsed = json.loads(raw_text)
+  except json.JSONDecodeError as Error:
+    # 모델 출력이 JSON 이 아니면 러너가 실패로 기록한다
+    raise DecompositionOutputError(f"JSON 이 아니다: {Error}") from Error
+  # 최상위는 assign 과 titles 키를 가진 객체여야 한다
+  if not isinstance(Parsed, dict) or "assign" not in Parsed or "titles" not in Parsed:
+    raise DecompositionOutputError("assign 이나 titles 키가 없다")
+  Assign = Parsed["assign"]
+  Titles = Parsed["titles"]
+  # assign 은 객체, titles 는 문자열 목록이어야 한다
+  if not isinstance(Assign, dict):
+    raise DecompositionOutputError("assign 이 객체가 아니다")
+  if not isinstance(Titles, list) or not all(isinstance(T, str) for T in Titles):
+    raise DecompositionOutputError("titles 가 문자열 목록이 아니다")
+  # 제목이 하나도 없으면 노트가 하나도 없다
+  if len(Titles) == 0:
+    raise DecompositionOutputError("titles 가 비어 있다")
+  # 지침 3 절 : 없는 id 를 가리키면 멈춘다
+  Unknown = [Label for Label in Assign if Label not in LabelMap]
+  if Unknown:
+    raise ValueError(f"표지에 없는 assign 키: {Unknown}")
+  # 사용자 결정 : 모든 세그먼트가 노트에 들어간다 - 빠진 표지는 출력 오류다
+  Missing = [Label for Label in LabelMap if Label not in Assign]
+  if Missing:
+    raise DecompositionOutputError(f"assign 에 빠진 표지: {Missing}")
+  for Label, Number in Assign.items():
+    # bool 은 int 의 하위 형이라 따로 거른다
+    if not isinstance(Number, int) or isinstance(Number, bool):
+      raise DecompositionOutputError(f"노트 번호가 정수가 아니다: {Label}")
+    # 번호는 제목 개수 안에 있어야 노트에 대응한다
+    if Number < 1 or Number > len(Titles):
+      raise DecompositionOutputError(f"노트 번호가 범위 밖이다: {Label} = {Number}")
+  # 표지 없이 제목만 있는 번호는 노트가 아니라 출력 오류다
+  if set(Assign.values()) != set(range(1, len(Titles) + 1)):
+    raise DecompositionOutputError("쓰인 번호가 1 부터 제목 개수까지 빠짐없지 않다")
+
+  # LabelMap 은 seq 순서로 만들어지므로 키 순서가 곧 seq 순서다
+  Drafts = []
+  for Number, Title in enumerate(Titles, start=1):
+    _require_text(Title, "title")
+    SegmentIds = [LabelMap[Label] for Label in LabelMap if Assign[Label] == Number]
+    # 본문을 만들 원문이 없는 세그먼트는 본문이 조용히 비게 된다
+    NoText = [SegId for SegId in SegmentIds if SegId not in TextById]
+    if NoText:
+      raise ValueError(f"TextById 에 없는 segment_id: {NoText}")
+    Body = "\n\n".join(TextById[SegId] for SegId in SegmentIds)
+    Drafts.append(NoteDraft(title=Title, body=Body, source_segment_ids=SegmentIds))
+  return Drafts
