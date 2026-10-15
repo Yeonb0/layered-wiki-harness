@@ -78,3 +78,50 @@ def coverage(LabelMap: dict, Drafts: list[NoteDraft]) -> dict:
   AllIds = list(LabelMap.values())
   Uncovered = [SegId for SegId in AllIds if SegId not in Used]
   return {"segments": len(AllIds), "covered": len(AllIds) - len(Uncovered), "uncovered_ids": Uncovered}
+
+
+def parse_grouping(raw_text: str, LabelMap: dict, TextById: dict) -> list[NoteDraft]:
+  # 모델은 제목과 세그먼트 묶음만 낸다 - 본문은 근거 세그먼트 원문을 seq 순서로 이어 붙인다 ( 사용자 결정 )
+  try:
+    Parsed = json.loads(raw_text)
+  except json.JSONDecodeError as Error:
+    # 모델 출력이 JSON 이 아니면 러너가 실패로 기록한다
+    raise DecompositionOutputError(f"JSON 이 아니다: {Error}") from Error
+  # 최상위는 notes 키를 가진 객체여야 한다
+  if not isinstance(Parsed, dict) or "notes" not in Parsed:
+    raise DecompositionOutputError("notes 키가 없다")
+  RawNotes = Parsed["notes"]
+  # notes 가 목록이 아니거나 비면 노트가 하나도 없다
+  if not isinstance(RawNotes, list) or len(RawNotes) == 0:
+    raise DecompositionOutputError("notes 가 빈 목록이거나 목록이 아니다")
+
+  # LabelMap 은 seq 순서로 만들어지므로 키 순서가 곧 seq 순서다
+  Order = {Label: Position for Position, Label in enumerate(LabelMap)}
+  Drafts = []
+  for RawNote in RawNotes:
+    # 노트 하나는 객체여야 한다
+    if not isinstance(RawNote, dict):
+      raise DecompositionOutputError("노트가 객체가 아니다")
+    Title = _require_text(RawNote.get("title"), "title")
+    Labels = RawNote.get("segments")
+    # segments 는 문자열 목록이어야 한다
+    if not isinstance(Labels, list) or not all(isinstance(L, str) for L in Labels):
+      raise DecompositionOutputError("segments 가 문자열 목록이 아니다")
+    # 한 노트 안 표지 중복은 출처 기록이 부풀려진다
+    if len(set(Labels)) != len(Labels):
+      raise DecompositionOutputError(f"한 노트 안 표지 중복: {Labels}")
+    # 지침 3 절 : source_segment_ids 가 비면 멈춘다
+    if len(Labels) == 0:
+      raise ValueError(f"노트의 segments 가 비어 있다: {Title!r}")
+    # 지침 3 절 : 없는 id 를 가리키면 멈춘다
+    Unknown = [L for L in Labels if L not in LabelMap]
+    if Unknown:
+      raise ValueError(f"표지에 없는 segments: {Unknown}")
+    SegmentIds = [LabelMap[L] for L in sorted(Labels, key=lambda L: Order[L])]
+    # 본문을 만들 원문이 없는 세그먼트는 본문이 조용히 비게 된다
+    Missing = [SegId for SegId in SegmentIds if SegId not in TextById]
+    if Missing:
+      raise ValueError(f"TextById 에 없는 segment_id: {Missing}")
+    Body = "\n\n".join(TextById[SegId] for SegId in SegmentIds)
+    Drafts.append(NoteDraft(title=Title, body=Body, source_segment_ids=SegmentIds))
+  return Drafts
