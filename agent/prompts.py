@@ -37,8 +37,16 @@ def _check_mode_and_layer(mode: str, source_layer: str) -> None:
     raise ValueError(f"알 수 없는 source_layer: {source_layer!r}")
 
 
-def place_schema(mode: str, source_layer: str) -> dict:
+def place_schema(mode: str, source_layer: str, CandidateIds: list[str]) -> dict:
   _check_mode_and_layer(mode, source_layer)
+  # 후보 id 가 겹치면 enum 이 모호하고 링크 대상 층도 모호하다
+  if len(set(CandidateIds)) != len(CandidateIds):
+    raise ValueError(f"후보 id 중복: {CandidateIds}")
+  # 연기 시험 103단계에서 후보 0개 배치 출력이 512 토큰에서 잘림 - 링크 대상을 형식으로 막는다
+  if CandidateIds:
+    LinkSchema = {"type": "array", "maxItems": len(CandidateIds), "items": {"type": "string", "enum": list(CandidateIds)}}
+  else:
+    LinkSchema = {"type": "array", "maxItems": 0}
   # 고정 결정 : 층별 분리 모드에서 출처 층보다 위 새 노트 금지 - 스키마 enum 으로도 막는다
   if mode == "all_layers":
     Layers = list(LAYER_ORDER)
@@ -48,9 +56,10 @@ def place_schema(mode: str, source_layer: str) -> dict:
     "type": "object",
     "properties": {
       "layer": {"type": "string", "enum": Layers},
-      "upward_links": {"type": "array", "items": {"type": "string"}},
-      "downward_links": {"type": "array", "items": {"type": "string"}},
-      "rationale": {"type": "string"},
+      "upward_links": dict(LinkSchema),
+      "downward_links": dict(LinkSchema),
+      # 근거는 한 문장이라서 상한을 두어 반복 출력이 끝없이 이어지는 것을 막는다
+      "rationale": {"type": "string", "maxLength": 200},
     },
     "required": ["layer", "upward_links", "downward_links", "rationale"],
   }
@@ -94,7 +103,7 @@ def build_place_messages(
     "2. upward_links : 후보 가운데 이 노트와 직접 관련된, 이 노트와 같은 층이거나 더 위층인 노트의 id.",
     "3. downward_links : 후보 가운데 이 노트와 직접 관련된, 이 노트보다 아래층인 노트의 id.",
     "4. 관련 없는 후보는 링크하지 않는다. 없으면 빈 목록이다.",
-    "5. rationale : 층과 링크를 정한 이유를 한 문장으로 쓴다.",
+    "5. rationale : 층과 링크를 정한 이유를 200자 이하 한 문장으로 쓴다.",
     "6. JSON 만 출력한다.",
   ])
   if Candidates:

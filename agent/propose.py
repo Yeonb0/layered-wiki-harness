@@ -119,7 +119,8 @@ def run_propose_doc(
     PlaceMessages = build_place_messages(layer_block, mode, doc.source_layer, Draft.title, Draft.body, Candidates)
     require_block_in_messages(PlaceMessages, layer_block)
     PlaceResult = chat_fn(
-      PlaceMessages, model_id, place_config, place_schema(mode, doc.source_layer), timeout_seconds=timeout_seconds
+      PlaceMessages, model_id, place_config, place_schema(mode, doc.source_layer, [Cand.id for Cand in Candidates]),
+      timeout_seconds=timeout_seconds
     )
 
     Problems = []

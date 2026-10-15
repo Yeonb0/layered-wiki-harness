@@ -113,7 +113,7 @@ class RunProposeDocTest(unittest.TestCase):
     self.assertIn("이 에이전트는 출처 층 ( 팀 ) 에서만 노트를 만든다. layer 값은 팀 하나뿐이다.", Chat.Calls[1]["messages"][0]["content"])
 
   def test_all_layers_schema_enum_is_every_layer(self) -> None:
-    self.assertEqual(place_schema("all_layers", "팀")["properties"]["layer"]["enum"], LAYER_ORDER)
+    self.assertEqual(place_schema("all_layers", "팀", [])["properties"]["layer"]["enum"], LAYER_ORDER)
 
   def test_split_by_layer_layer_above_source_raises_value_error(self) -> None:
     Chat = FakeChat([_result({"notes": [{"title": "노트1", "segments": ["S1"]}]}), _result(_place(Layer="전사"))])
@@ -212,6 +212,39 @@ class DecomposeSchemaTest(unittest.TestCase):
     self.assertEqual(Segments["items"]["enum"], ["S1", "S2", "S3"])
     self.assertEqual(Chat.Calls[0]["schema"]["properties"]["notes"]["maxItems"], 3)
     self.assertIn("( S1 ~ S3 )", Chat.Calls[0]["messages"][0]["content"])
+
+
+class PlaceSchemaTest(unittest.TestCase):
+  def test_links_with_candidates_use_candidate_id_enum(self) -> None:
+    Props = place_schema("all_layers", "팀", ["a", "b"])["properties"]
+    for Key in ("upward_links", "downward_links"):
+      self.assertEqual(Props[Key], {"type": "array", "maxItems": 2, "items": {"type": "string", "enum": ["a", "b"]}})
+
+  def test_links_without_candidates_allow_only_empty_list(self) -> None:
+    Props = place_schema("all_layers", "팀", [])["properties"]
+    for Key in ("upward_links", "downward_links"):
+      self.assertEqual(Props[Key], {"type": "array", "maxItems": 0})
+
+  def test_rationale_has_max_length(self) -> None:
+    self.assertEqual(place_schema("all_layers", "팀", [])["properties"]["rationale"], {"type": "string", "maxLength": 200})
+
+  def test_duplicate_candidate_ids_raise_value_error(self) -> None:
+    with self.assertRaises(ValueError):
+      place_schema("all_layers", "팀", ["a", "a"])
+
+  def test_rule_five_mentions_length_limit(self) -> None:
+    Messages = build_place_messages(_BLOCK, "all_layers", "팀", "제목", "본문", [])
+    self.assertIn("5. rationale : 층과 링크를 정한 이유를 200자 이하 한 문장으로 쓴다.", Messages[0]["content"])
+
+  def test_run_propose_doc_passes_note_candidate_ids_to_place_call(self) -> None:
+    Chat = FakeChat([_result(_TWO_NOTES), _result(_place()), _result(_place())])
+    _run(Chat)
+    First = Chat.Calls[1]["schema"]["properties"]
+    Second = Chat.Calls[2]["schema"]["properties"]
+    # 첫째 노트는 볼트가 비어 후보가 없고 둘째 노트의 후보는 첫째 노트뿐이다
+    self.assertEqual(First["upward_links"], {"type": "array", "maxItems": 0})
+    self.assertEqual(Second["upward_links"]["items"]["enum"], ["문서A#n0"])
+    self.assertEqual(Second["downward_links"]["maxItems"], 1)
 
 
 class RequireBlockTest(unittest.TestCase):
