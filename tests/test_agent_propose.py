@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from agent.decompose import parse_grouping
+from agent.decompose import DecompositionOutputError, parse_grouping
 from agent.llm_client import ChatResult, GenerationConfig
 from agent.prompts import (
   build_decompose_messages,
@@ -91,6 +91,35 @@ class ParseGroupingTest(unittest.TestCase):
     self.assertEqual(Drafts[1].body, "셋째 글")
 
 
+class ParseGroupingOverlapTest(unittest.TestCase):
+  def setUp(self) -> None:
+    self.LabelMap = {"S1": "세그A", "S2": "세그B", "S3": "세그C"}
+    self.TextById = {"세그A": "첫째 글", "세그B": "둘째 글", "세그C": "셋째 글"}
+
+  def _raw(self, Notes) -> str:
+    return json.dumps({"notes": Notes}, ensure_ascii=False)
+
+  def test_same_label_in_two_notes_raises_output_error_with_labels(self) -> None:
+    Raw = self._raw([{"title": "가", "segments": ["S1", "S2"]}, {"title": "나", "segments": ["S2", "S3"]}])
+    with self.assertRaises(DecompositionOutputError) as Ctx:
+      parse_grouping(Raw, self.LabelMap, self.TextById)
+    self.assertIn("['S2']", str(Ctx.exception))
+
+  def test_no_overlap_passes(self) -> None:
+    Raw = self._raw([{"title": "가", "segments": ["S1"]}, {"title": "나", "segments": ["S2", "S3"]}])
+    self.assertEqual(len(parse_grouping(Raw, self.LabelMap, self.TextById)), 2)
+
+  def test_overlap_and_unknown_label_raises_value_error_first(self) -> None:
+    Raw = self._raw([
+      {"title": "가", "segments": ["S1", "S2"]},
+      {"title": "나", "segments": ["S2"]},
+      {"title": "다", "segments": ["S9"]},
+    ])
+    with self.assertRaises(ValueError) as Ctx:
+      parse_grouping(Raw, self.LabelMap, self.TextById)
+    self.assertNotIsInstance(Ctx.exception, DecompositionOutputError)
+
+
 class RunProposeDocTest(unittest.TestCase):
   def test_all_layers_normal_flow(self) -> None:
     Chat = FakeChat([_result(_TWO_NOTES), _result(_place()), _result(_place(Up=["문서A#n0"]))])
@@ -132,6 +161,19 @@ class RunProposeDocTest(unittest.TestCase):
     self.assertFalse(Log[0]["ok"])
     self.assertIn("JSON 이 아니다", Log[0]["error"])
     self.assertEqual(VaultNotes, [])
+
+  def test_overlapping_labels_are_recorded_as_decompose_failure(self) -> None:
+    Overlap = {"notes": [{"title": "노트1", "segments": ["S1", "S2"]}, {"title": "노트2", "segments": ["S2", "S3"]}]}
+    Log, VaultNotes, _, _ = _run(FakeChat([_result(Overlap)]))
+    self.assertEqual(len(Log), 1)
+    self.assertFalse(Log[0]["ok"])
+    self.assertIn("표지가 두 노트 이상에 있다", Log[0]["error"])
+    self.assertEqual(VaultNotes, [])
+
+  def test_decompose_system_message_has_one_note_per_label_rule(self) -> None:
+    Chat = FakeChat([_result(_TWO_NOTES), _result(_place()), _result(_place())])
+    _run(Chat)
+    self.assertIn("표지 하나는 노트 하나에만 넣는다.", Chat.Calls[0]["messages"][0]["content"])
 
   def test_decompose_empty_segments_raises_value_error(self) -> None:
     with self.assertRaises(ValueError):

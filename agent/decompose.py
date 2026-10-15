@@ -124,4 +124,14 @@ def parse_grouping(raw_text: str, LabelMap: dict, TextById: dict) -> list[NoteDr
       raise ValueError(f"TextById 에 없는 segment_id: {Missing}")
     Body = "\n\n".join(TextById[SegId] for SegId in SegmentIds)
     Drafts.append(NoteDraft(title=Title, body=Body, source_segment_ids=SegmentIds))
+  # 사용자 결정 (가) 표지 하나는 노트 하나에만 - 노트 본문이 원문 연결이라 겹치면 원문이 중복된다
+  # 하니스가 고쳐서 넘기지 않고 실패로 기록한다 ( 모든 노트를 읽은 뒤에 본다 )
+  Seen = {}
+  for Draft in Drafts:
+    for SegId in Draft.source_segment_ids:
+      Seen[SegId] = Seen.get(SegId, 0) + 1
+  Overlapped = [SegId for SegId, Count in Seen.items() if Count > 1]
+  if Overlapped:
+    OverlappedLabels = [Label for Label in LabelMap if LabelMap[Label] in Overlapped]
+    raise DecompositionOutputError(f"표지가 두 노트 이상에 있다: {OverlappedLabels}")
   return Drafts
