@@ -5,8 +5,8 @@ from dataclasses import asdict
 from agent.decompose import DecompositionOutputError, build_segment_labels, coverage, parse_grouping
 from agent.placement import MODES, build_note_record, validate_placement
 from agent.prompts import (
-  DECOMPOSE_SCHEMA,
   build_decompose_messages,
+  decompose_schema,
   build_place_messages,
   place_schema,
   require_block_in_messages,
@@ -77,9 +77,11 @@ def run_propose_doc(
   TextById = {Seg.segment_id: Seg.text for Seg in doc.segments}
   Log = []
 
-  Messages = build_decompose_messages(layer_block, doc.source_layer, Shown)
+  # 모델이 이 문서에 없는 표지를 만들지 못하게 표지 목록을 프롬프트와 스키마에 넘긴다
+  Labels = list(LabelMap)
+  Messages = build_decompose_messages(layer_block, doc.source_layer, Shown, Labels)
   require_block_in_messages(Messages, layer_block)
-  Result = chat_fn(Messages, model_id, decompose_config, DECOMPOSE_SCHEMA, timeout_seconds=timeout_seconds)
+  Result = chat_fn(Messages, model_id, decompose_config, decompose_schema(Labels), timeout_seconds=timeout_seconds)
 
   Drafts = []
   Error = None

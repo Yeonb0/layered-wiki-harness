@@ -3,7 +3,13 @@ import unittest
 
 from agent.decompose import parse_grouping
 from agent.llm_client import ChatResult, GenerationConfig
-from agent.prompts import build_decompose_messages, build_place_messages, place_schema, require_block_in_messages
+from agent.prompts import (
+  build_decompose_messages,
+  build_place_messages,
+  decompose_schema,
+  place_schema,
+  require_block_in_messages,
+)
 from agent.propose import run_propose_doc
 from agent.types import SourceDoc, SourceSegment
 from retrieval.search import LAYER_ORDER, Retriever
@@ -178,9 +184,39 @@ class RunProposeDocTest(unittest.TestCase):
       _run(FakeChat([]), mode="other_mode")
 
 
+class DecomposeSchemaTest(unittest.TestCase):
+  def test_enum_and_limits_follow_labels(self) -> None:
+    Schema = decompose_schema(["S1", "S2", "S3"])
+    Notes = Schema["properties"]["notes"]
+    self.assertEqual(Notes["maxItems"], 3)
+    self.assertEqual(Notes["minItems"], 1)
+    self.assertEqual(Notes["items"]["properties"]["title"]["maxLength"], 60)
+    Segments = Notes["items"]["properties"]["segments"]
+    self.assertEqual(Segments["maxItems"], 3)
+    self.assertEqual(Segments["items"], {"type": "string", "enum": ["S1", "S2", "S3"]})
+
+  def test_empty_labels_raises_value_error(self) -> None:
+    with self.assertRaises(ValueError):
+      decompose_schema([])
+    with self.assertRaises(ValueError):
+      build_decompose_messages(_BLOCK, "팀", "보임", [])
+
+  def test_rule_three_mentions_label_range(self) -> None:
+    Messages = build_decompose_messages(_BLOCK, "팀", "보임", ["S1", "S2", "S3"])
+    self.assertIn("3. 모든 노트는 입력에 있는 표지 ( S1 ~ S3 ) 를 1개 이상 가진다. 다른 표지는 쓰지 않는다.", Messages[0]["content"])
+
+  def test_run_propose_doc_passes_document_labels_to_decompose_call(self) -> None:
+    Chat = FakeChat([_result(_TWO_NOTES), _result(_place()), _result(_place())])
+    _run(Chat)
+    Segments = Chat.Calls[0]["schema"]["properties"]["notes"]["items"]["properties"]["segments"]
+    self.assertEqual(Segments["items"]["enum"], ["S1", "S2", "S3"])
+    self.assertEqual(Chat.Calls[0]["schema"]["properties"]["notes"]["maxItems"], 3)
+    self.assertIn("( S1 ~ S3 )", Chat.Calls[0]["messages"][0]["content"])
+
+
 class RequireBlockTest(unittest.TestCase):
   def test_missing_block_raises_value_error(self) -> None:
-    Messages = build_decompose_messages(_BLOCK, "팀", "보임")
+    Messages = build_decompose_messages(_BLOCK, "팀", "보임", ["S1", "S2"])
     require_block_in_messages(Messages, _BLOCK)
     with self.assertRaises(ValueError):
       require_block_in_messages(Messages, "다른 블록")
