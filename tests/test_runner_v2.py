@@ -334,7 +334,7 @@ class OutputFilesTest(RunV2TestBase):
     self.assertIsNone(Disk["error"])
     for Key in (
       "trial_id", "args", "schedule", "harness_commit", "input_sha256", "layer_block_sha256", "model_id", "endpoints",
-      "embed_max_chars", "excerpt_length", "pythonhashseed", "python_version", "started_at_utc", "ended_at_utc",
+      "embed_max_chars", "embed_timeout_seconds", "excerpt_length", "pythonhashseed", "python_version", "started_at_utc", "ended_at_utc",
     ):
       self.assertIn(Key, Disk)
     self.assertEqual(Disk["harness_commit"], "c" * 40)
@@ -343,6 +343,7 @@ class OutputFilesTest(RunV2TestBase):
       ["criteria", "doc_ids", "docs", "segments", "selection", "source_layers", "split_doc_ids"],
     )
     self.assertEqual(Disk["embed_max_chars"], 4000)
+    self.assertEqual(Disk["embed_timeout_seconds"], 600)
     self.assertEqual(len(Disk["schedule"]["entries"]), _DOC_COUNT * 4)
     BaseKeys = (
       "trial_id", "run_kind", "snapshot", "harness_commit", "model_id", "criteria_sha256", "condition", "mode", "k",

@@ -16,7 +16,7 @@ from agent.placement import MODES
 from agent.propose import run_propose_doc
 from agent.types import SourceDoc, SourceSegment
 from labeling.gold import read_ids, read_jsonl, read_owners
-from retrieval.embeddings import EMBED_MAX_CHARS, EMBEDDING_ENDPOINT_ENV
+from retrieval.embeddings import EMBED_MAX_CHARS, EMBED_TIMEOUT_SECONDS, EMBEDDING_ENDPOINT_ENV
 from retrieval.search import EXCERPT_LENGTH, LAYER_ORDER, Retriever
 from runner.conditions import Condition, ConditionCell, build_interleaved_schedule
 from runner.types import InputDoc
@@ -301,6 +301,7 @@ def run_v2(
     # 서버 주소는 환경 변수로만 받으므로 어느 서버로 돌렸는지 기록에 남긴다
     "endpoints": {LLM_ENDPOINT_ENV: os.environ.get(LLM_ENDPOINT_ENV), EMBEDDING_ENDPOINT_ENV: os.environ.get(EMBEDDING_ENDPOINT_ENV)},
     "embed_max_chars": EMBED_MAX_CHARS,
+    "embed_timeout_seconds": EMBED_TIMEOUT_SECONDS,
     "excerpt_length": EXCERPT_LENGTH,
     # 해시 시드는 강제하지 않고 실제 값만 남긴다 - 없으면 null
     "pythonhashseed": os.environ.get("PYTHONHASHSEED"),

@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest import mock
 
-from retrieval.embeddings import EMBED_MAX_CHARS, EMBEDDING_ENDPOINT_ENV, embed, embed_batch
+from retrieval.embeddings import EMBED_MAX_CHARS, EMBED_TIMEOUT_SECONDS, EMBEDDING_ENDPOINT_ENV, embed, embed_batch
 
 
 def _synthetic_backend(Texts: list[str]) -> list[list[float]]:
@@ -59,6 +59,14 @@ class EmbeddingsTruncationTest(unittest.TestCase):
     Short = "나" * EMBED_MAX_CHARS
     Body = self._post_body(["짧은 글", Short])
     self.assertEqual(Body["input"], ["짧은 글", Short])
+
+  def test_post_timeout_is_embed_timeout_seconds(self) -> None:
+    Response = mock.Mock()
+    Response.json.return_value = {"data": [{"index": 0, "embedding": [1.0]}]}
+    with mock.patch.dict(os.environ, {EMBEDDING_ENDPOINT_ENV: "http://127.0.0.1:0/v1/embeddings"}), mock.patch("requests.post", return_value=Response) as Post:
+      embed_batch(["x"])
+    self.assertEqual(Post.call_args.kwargs["timeout"], EMBED_TIMEOUT_SECONDS)
+    self.assertEqual(EMBED_TIMEOUT_SECONDS, 600)
 
   def test_limit_is_4000(self) -> None:
     self.assertEqual(EMBED_MAX_CHARS, 4000)

@@ -6,7 +6,8 @@ import requests
 
 EMBEDDING_ENDPOINT_ENV = "LAYERED_WIKI_EMBED_ENDPOINT"
 EMBEDDING_MODEL = "bge-m3"
-DEFAULT_TIMEOUT_SECONDS = 30
+# 125단계에서 4,000자 근처 입력의 CPU 임베딩이 30 s 를 넘겨 시행이 중단됨 ( 126단계 측정 4,000자 합성 17.8 s ), 전 조건 공통
+EMBED_TIMEOUT_SECONDS = 600
 # bge-m3 서버 한 번 입력 8192 토큰 상한, 세그먼트 최대 15350자 · 노트 본문 연결 · B1 문서 단위 검색, 전 조건 공통
 EMBED_MAX_CHARS = 4000
 
@@ -35,7 +36,7 @@ def _call_llama_server(Texts: list[str]) -> list[list[float]]:
   Response = requests.post(
     _embedding_endpoint(),
     json={"model": EMBEDDING_MODEL, "input": Texts},
-    timeout=DEFAULT_TIMEOUT_SECONDS,
+    timeout=EMBED_TIMEOUT_SECONDS,
   )
   Response.raise_for_status()
   Items = sorted(Response.json()["data"], key=lambda Item: Item["index"])
