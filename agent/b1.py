@@ -82,7 +82,7 @@ def run_b1_doc(
   Messages = build_b1_messages(layer_block, mode, doc.source_layer, Shown, Labels, Candidates)
   require_block_in_messages(Messages, layer_block)
   Result = chat_fn(
-    Messages, model_id, config, b1_schema(Labels, mode, doc.source_layer, [Cand.id for Cand in Candidates]),
+    Messages, model_id, config, b1_schema(Labels, mode, doc.source_layer, Candidates),
     timeout_seconds=timeout_seconds,
   )
 

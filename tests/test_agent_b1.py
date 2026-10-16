@@ -7,6 +7,7 @@ from agent.prompts import b1_schema, build_b1_messages, build_place_messages, la
 from agent.decompose import build_segment_labels
 from agent.types import SourceDoc, SourceSegment
 from retrieval.search import LAYER_ORDER, Retriever
+from retrieval.types import Candidate
 from vault.types import DocumentRecord
 
 # 픽스처일 뿐이며 규칙과 무관하다 - 합성 값이다
@@ -266,7 +267,7 @@ class B1PromptAndSchemaTest(unittest.TestCase):
     self.assertTrue(Filled.endswith("후보 노트 :\n- id : a | 층 : 팀 | 제목 : t | 발췌 : e"))
 
   def test_b1_schema_shape(self) -> None:
-    Schema = b1_schema(["S1", "S2"], "all_layers", "팀", ["a"])
+    Schema = b1_schema(["S1", "S2"], "all_layers", "팀", [Candidate(id="a", layer="팀", title="t", excerpt="e")])
     self.assertEqual(Schema["required"], ["assign", "notes"])
     self.assertEqual(Schema["properties"]["assign"], assign_schema(["S1", "S2"])["properties"]["assign"])
     Notes = Schema["properties"]["notes"]
@@ -274,7 +275,7 @@ class B1PromptAndSchemaTest(unittest.TestCase):
     Item = Notes["items"]
     self.assertEqual(Item["required"], ["title", "layer", "upward_links", "downward_links", "rationale"])
     self.assertEqual(Item["properties"]["title"], {"type": "string", "maxLength": 60})
-    Place = place_schema("all_layers", "팀", ["a"])["properties"]
+    Place = place_schema("all_layers", "팀", [Candidate(id="a", layer="팀", title="t", excerpt="e")])["properties"]
     for Key in ("layer", "upward_links", "downward_links", "rationale"):
       self.assertEqual(Item["properties"][Key], Place[Key])
     # 사용자 결정 2026-10-16 (가-2) : 전 층 모드의 enum 은 출처 층 이상이다
@@ -286,7 +287,7 @@ class B1PromptAndSchemaTest(unittest.TestCase):
     with self.assertRaises(ValueError):
       b1_schema(["S1"], "all_layers", "없는층", [])
     with self.assertRaises(ValueError):
-      b1_schema(["S1"], "all_layers", "팀", ["a", "a"])
+      b1_schema(["S1"], "all_layers", "팀", [Candidate(id="a", layer="팀", title="t", excerpt="e")] * 2)
     with self.assertRaises(ValueError):
       b1_schema([], "all_layers", "팀", [])
 

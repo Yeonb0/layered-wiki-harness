@@ -14,6 +14,7 @@ from agent.prompts import (
 from agent.propose import run_propose_doc
 from agent.types import SourceDoc, SourceSegment
 from retrieval.search import LAYER_ORDER, Retriever
+from retrieval.types import Candidate
 
 # 픽스처일 뿐이며 규칙과 무관하다 - 합성 값이다
 _BLOCK = "합성 층 정의 블록\n- 합성 조항"
@@ -360,7 +361,9 @@ class ParseAssignmentTest(unittest.TestCase):
 
 class PlaceSchemaTest(unittest.TestCase):
   def test_links_with_candidates_use_candidate_id_enum(self) -> None:
-    Props = place_schema("all_layers", "팀", ["a", "b"])["properties"]
+    Props = place_schema(
+      "all_layers", "팀", [Candidate(id="a", layer="팀", title="t", excerpt="e"), Candidate(id="b", layer="팀", title="t", excerpt="e")]
+    )["properties"]
     for Key in ("upward_links", "downward_links"):
       self.assertEqual(Props[Key], {"type": "array", "maxItems": 2, "items": {"type": "string", "enum": ["a", "b"]}})
 
@@ -374,7 +377,7 @@ class PlaceSchemaTest(unittest.TestCase):
 
   def test_duplicate_candidate_ids_raise_value_error(self) -> None:
     with self.assertRaises(ValueError):
-      place_schema("all_layers", "팀", ["a", "a"])
+      place_schema("all_layers", "팀", [Candidate(id="a", layer="팀", title="t", excerpt="e")] * 2)
 
   def test_rule_five_mentions_length_limit(self) -> None:
     Messages = build_place_messages(_BLOCK, "all_layers", "팀", "제목", "본문", [])

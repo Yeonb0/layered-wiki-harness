@@ -60,44 +60,56 @@ def _check_mode_and_layer(mode: str, source_layer: str) -> None:
     raise ValueError(f"알 수 없는 source_layer: {source_layer!r}")
 
 
-def _placement_properties(mode: str, source_layer: str, CandidateIds: list[str]) -> dict:
+def _link_schema(Ids: list[str]) -> dict:
+  # 연기 시험 103단계에서 후보 0개 배치 출력이 512 토큰에서 잘림 - 링크 대상을 형식으로 막는다
+  if Ids:
+    return {"type": "array", "maxItems": len(Ids), "items": {"type": "string", "enum": list(Ids)}}
+  return {"type": "array", "maxItems": 0}
+
+
+def _placement_properties(mode: str, source_layer: str, Candidates: list) -> dict:
   # 배치 호출과 B1 호출이 같은 층 enum · 링크 스키마를 쓰도록 한 곳에 둔다
   _check_mode_and_layer(mode, source_layer)
+  CandidateIds = [Cand.id for Cand in Candidates]
   # 후보 id 가 겹치면 enum 이 모호하고 링크 대상 층도 모호하다
   if len(set(CandidateIds)) != len(CandidateIds):
     raise ValueError(f"후보 id 중복: {CandidateIds}")
-  # 연기 시험 103단계에서 후보 0개 배치 출력이 512 토큰에서 잘림 - 링크 대상을 형식으로 막는다
-  if CandidateIds:
-    LinkSchema = {"type": "array", "maxItems": len(CandidateIds), "items": {"type": "string", "enum": list(CandidateIds)}}
-  else:
-    LinkSchema = {"type": "array", "maxItems": 0}
+  for Cand in Candidates:
+    # 후보 층이 층 순서에 없으면 링크 방향을 정할 수 없다
+    if Cand.layer not in LAYER_ORDER:
+      raise ValueError(f"알 수 없는 후보 layer: {Cand.layer!r} ( {Cand.id} )")
   # 사용자 결정 2026-10-16 (가-2) : 정답에 하향 배치가 없으므로 전 층 모드도 출처 층 이상만, 층별 분리 모드는 출처 층 하나만 - 스키마 enum 으로도 막는다
   if mode == "all_layers":
     Layers = LAYER_ORDER[LAYER_ORDER.index(source_layer):]
   else:
     Layers = [source_layer]
+  SourceRank = LAYER_ORDER.index(source_layer)
+  TopRank = LAYER_ORDER.index(Layers[-1])
+  # 사용자 결정 2026-10-16 (다) : 상향 링크는 출처 층 이상 후보만, 하향 링크는 노트가 가질 수 있는 최고 층 미만 후보만 - 방향 규칙을 형식으로 막는다
+  UpwardIds = [Cand.id for Cand in Candidates if LAYER_ORDER.index(Cand.layer) >= SourceRank]
+  DownwardIds = [Cand.id for Cand in Candidates if LAYER_ORDER.index(Cand.layer) < TopRank]
   return {
     "layer": {"type": "string", "enum": Layers},
-    "upward_links": dict(LinkSchema),
-    "downward_links": dict(LinkSchema),
+    "upward_links": _link_schema(UpwardIds),
+    "downward_links": _link_schema(DownwardIds),
     # 근거는 한 문장이라서 상한을 두어 반복 출력이 끝없이 이어지는 것을 막는다
     "rationale": {"type": "string", "maxLength": 200},
   }
 
 
-def place_schema(mode: str, source_layer: str, CandidateIds: list[str]) -> dict:
+def place_schema(mode: str, source_layer: str, Candidates: list) -> dict:
   return {
     "type": "object",
-    "properties": _placement_properties(mode, source_layer, CandidateIds),
+    "properties": _placement_properties(mode, source_layer, Candidates),
     "required": ["layer", "upward_links", "downward_links", "rationale"],
   }
 
 
-def b1_schema(Labels: list[str], mode: str, source_layer: str, CandidateIds: list[str]) -> dict:
+def b1_schema(Labels: list[str], mode: str, source_layer: str, Candidates: list) -> dict:
   # B1 은 분해와 배치를 한 번에 받으므로 assign 은 분해 스키마의 것을, 노트 항목은 배치 스키마의 것을 그대로 쓴다
   Assign = assign_schema(Labels)["properties"]["assign"]
   NoteProperties = {"title": {"type": "string", "maxLength": 60}}
-  NoteProperties.update(_placement_properties(mode, source_layer, CandidateIds))
+  NoteProperties.update(_placement_properties(mode, source_layer, Candidates))
   return {
     "type": "object",
     "properties": {

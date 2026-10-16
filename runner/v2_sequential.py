@@ -410,6 +410,11 @@ def parse_args(argv=None) -> argparse.Namespace:
   return Parser.parse_args(argv)
 
 
+def _print_flush(Line: str) -> None:
+  # tee 로 파이프할 때 끝날 때까지 화면이 비는 것을 막으려고 출력마다 flush 한다
+  print(Line, flush=True)
+
+
 def main(argv=None) -> None:
   Args = parse_args(argv)
   run_v2(
@@ -439,7 +444,7 @@ def main(argv=None) -> None:
     embed_backend=None,
     commit_fn=lambda: git_head_commit(REPO_DIR),
     work_root=DEFAULT_WORK_ROOT,
-    print_fn=print,
+    print_fn=_print_flush,
   )
 
 
