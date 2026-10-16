@@ -73,12 +73,12 @@ def run_b1_doc(
   Labels = list(LabelMap)
   Log = []
 
-  # B1 은 문서 단위로 한 번 검색한다 - 층별 분리 모드만 출처 층 이상으로 제한한다
-  CallerLayer = doc.source_layer if mode == "split_by_layer" else None
+  # B1 은 문서 단위로 한 번 검색한다
   # 호출이 실패한 문서도 볼트 크기를 로그에 남겨 순차 성장 곡선에서 재집계할 수 있게 검색 직전에 잡는다
   CallVaultSize = len(VaultNotes)
   # 질의는 Shown 하나로 한다 - Shown 이 이미 "제목 : ..." 으로 시작해 제목이 두 번 들어간다
-  Candidates = retriever.search(Shown, k, mode, CallerLayer)
+  # 사용자 결정 2026-10-16 (나-2) : 층별 분리 모드의 가시 범위는 층 × 그룹이다 - 모드 분기는 search_visible 이 한다
+  Candidates = retriever.search_visible(Shown, k, mode, doc.source_layer, doc.source_group, Owners)
   Messages = build_b1_messages(layer_block, mode, doc.source_layer, Shown, Labels, Candidates)
   require_block_in_messages(Messages, layer_block)
   Result = chat_fn(
@@ -131,7 +131,8 @@ def run_b1_doc(
       Links = [asdict(Link) for Link in Record.downward_conditional_links]
       VaultNotes.append(Record)
       LayerGroupById[Record.note_id] = (Record.layer, Record.group)
-      retriever.add(_to_document_record(Record))
+      # 그룹을 함께 색인해야 이후 문서의 층 × 그룹 검색이 이 노트를 판정할 수 있다
+      retriever.add(_to_document_record(Record), group=Record.group)
     Verdict = Validation.verdict
     Log.append(_entry(BaseLog, {
       "entry_type": "place",

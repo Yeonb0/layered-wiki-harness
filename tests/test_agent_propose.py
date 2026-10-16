@@ -141,11 +141,14 @@ class RunProposeDocTest(unittest.TestCase):
     Chat = FakeChat([_result(_ONE_NOTE), _result(_place())])
     _run(Chat, mode="split_by_layer")
     Enum = Chat.Calls[1]["schema"]["properties"]["layer"]["enum"]
-    self.assertEqual(Enum, ["개인", "팀"])
+    # 사용자 결정 2026-10-16 (가-2) : 층별 분리 모드의 enum 은 출처 층 하나다
+    self.assertEqual(Enum, ["팀"])
     self.assertIn("이 에이전트는 출처 층 ( 팀 ) 에서만 노트를 만든다. layer 값은 팀 하나뿐이다.", Chat.Calls[1]["messages"][0]["content"])
 
-  def test_all_layers_schema_enum_is_every_layer(self) -> None:
-    self.assertEqual(place_schema("all_layers", "팀", [])["properties"]["layer"]["enum"], LAYER_ORDER)
+  def test_all_layers_schema_enum_is_source_layer_and_above(self) -> None:
+    # 사용자 결정 2026-10-16 (가-2) : 정답에 하향 배치가 없으므로 전 층 모드도 출처 층 이상만 낸다
+    self.assertEqual(place_schema("all_layers", "팀", [])["properties"]["layer"]["enum"], ["팀", "전사"])
+    self.assertEqual(place_schema("all_layers", "개인", [])["properties"]["layer"]["enum"], LAYER_ORDER)
 
   def test_split_by_layer_layer_above_source_raises_value_error(self) -> None:
     Chat = FakeChat([_result(_ONE_NOTE), _result(_place(Layer="전사"))])

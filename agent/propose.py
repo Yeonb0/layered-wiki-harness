@@ -114,11 +114,10 @@ def run_propose_doc(
   if Error is not None:
     return Log
 
-  # 층별 분리 모드만 검색을 출처 층 이상으로 제한한다
-  CallerLayer = doc.source_layer if mode == "split_by_layer" else None
   for NoteIndex, Draft in enumerate(Drafts):
     VaultSize = len(VaultNotes)
-    Candidates = retriever.search(Draft.title + "\n" + Draft.body, k, mode, CallerLayer)
+    # 사용자 결정 2026-10-16 (나-2) : 층별 분리 모드의 가시 범위는 층 × 그룹이다 - 모드 분기는 search_visible 이 한다
+    Candidates = retriever.search_visible(Draft.title + "\n" + Draft.body, k, mode, doc.source_layer, doc.source_group, Owners)
     PlaceMessages = build_place_messages(layer_block, mode, doc.source_layer, Draft.title, Draft.body, Candidates)
     require_block_in_messages(PlaceMessages, layer_block)
     PlaceResult = chat_fn(
@@ -151,7 +150,8 @@ def run_propose_doc(
       Links = [asdict(Link) for Link in Record.downward_conditional_links]
       VaultNotes.append(Record)
       LayerGroupById[Record.note_id] = (Record.layer, Record.group)
-      retriever.add(_to_document_record(Record))
+      # 그룹을 함께 색인해야 이후 문서의 층 × 그룹 검색이 이 노트를 판정할 수 있다
+      retriever.add(_to_document_record(Record), group=Record.group)
     Log.append(_entry(BaseLog, {
       "entry_type": "place",
       "doc_id": doc.doc_id,

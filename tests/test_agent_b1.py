@@ -70,14 +70,14 @@ def _output(Notes=None, Assign=None) -> dict:
 
 
 class SpyRetriever(Retriever):
-  # search 를 감싸 질의와 caller_layer 를 기록한다
+  # search_visible 를 감싸 질의 · 모드 · 호출 층 · 호출 그룹을 기록한다
   def __init__(self, embed_backend) -> None:
     super().__init__(embed_backend=embed_backend)
     self.Searches = []
 
-  def search(self, query, k, mode, caller_layer):
-    self.Searches.append({"query": query, "caller_layer": caller_layer})
-    return super().search(query, k, mode, caller_layer)
+  def search_visible(self, query, k, mode, caller_layer, caller_group, owners):
+    self.Searches.append({"query": query, "mode": mode, "caller_layer": caller_layer, "caller_group": caller_group})
+    return super().search_visible(query, k, mode, caller_layer, caller_group, owners)
 
 
 def _record(Id: str, Layer: str) -> DocumentRecord:
@@ -165,7 +165,8 @@ class RunB1DocTest(unittest.TestCase):
     with self.assertRaises(ValueError):
       _run(Chat, mode="split_by_layer")
     Enum = Chat.Calls[0]["schema"]["properties"]["notes"]["items"]["properties"]["layer"]["enum"]
-    self.assertEqual(Enum, ["개인", "팀"])
+    # 사용자 결정 2026-10-16 (가-2) : 층별 분리 모드의 enum 은 출처 층 하나다
+    self.assertEqual(Enum, ["팀"])
 
   def test_every_system_message_contains_layer_block(self) -> None:
     Chat = FakeChat([_result(_output())])
@@ -205,8 +206,9 @@ class B1VaultSizeAndSearchTest(unittest.TestCase):
 
   def _spy_with_three_layers(self) -> SpyRetriever:
     Retr = SpyRetriever(_embed_backend)
-    for Id, Layer in (("개인노트", "개인"), ("팀노트", "팀"), ("전사노트", "전사")):
-      Retr.add(_record(Id, Layer))
+    # 사용자 결정 2026-10-16 (나-2) : 층별 분리 모드는 그룹을 알아야 하므로 노트마다 그룹을 넘긴다
+    for Id, Layer, Group in (("개인노트", "개인", "주인A"), ("팀노트", "팀", "그룹A"), ("전사노트", "전사", None)):
+      Retr.add(_record(Id, Layer), group=Group)
     return Retr
 
   def test_split_by_layer_search_uses_source_layer_as_caller_and_filters_lower(self) -> None:
@@ -214,13 +216,15 @@ class B1VaultSizeAndSearchTest(unittest.TestCase):
     Log, _, _, _ = _run(FakeChat([_result(_output())]), mode="split_by_layer", Retr=Retr)
     self.assertEqual({Cand["layer"] for Cand in Log[0]["candidates"]}, {"팀", "전사"})
     self.assertEqual(len(Retr.Searches), 1)
+    self.assertEqual(Retr.Searches[0]["mode"], "split_by_layer")
     self.assertEqual(Retr.Searches[0]["caller_layer"], "팀")
+    self.assertEqual(Retr.Searches[0]["caller_group"], "그룹A")
 
-  def test_all_layers_search_has_no_caller_layer_and_includes_personal(self) -> None:
+  def test_all_layers_search_is_unfiltered_and_includes_personal(self) -> None:
     Retr = self._spy_with_three_layers()
     Log, _, _, _ = _run(FakeChat([_result(_output())]), mode="all_layers", Retr=Retr)
     self.assertIn("개인", {Cand["layer"] for Cand in Log[0]["candidates"]})
-    self.assertIsNone(Retr.Searches[0]["caller_layer"])
+    self.assertEqual(Retr.Searches[0]["mode"], "all_layers")
 
   def test_search_query_is_shown_and_title_appears_once(self) -> None:
     Retr = SpyRetriever(_embed_backend)
@@ -273,7 +277,8 @@ class B1PromptAndSchemaTest(unittest.TestCase):
     Place = place_schema("all_layers", "팀", ["a"])["properties"]
     for Key in ("layer", "upward_links", "downward_links", "rationale"):
       self.assertEqual(Item["properties"][Key], Place[Key])
-    self.assertEqual(Item["properties"]["layer"]["enum"], LAYER_ORDER)
+    # 사용자 결정 2026-10-16 (가-2) : 전 층 모드의 enum 은 출처 층 이상이다
+    self.assertEqual(Item["properties"]["layer"]["enum"], ["팀", "전사"])
 
   def test_b1_schema_reuses_place_checks(self) -> None:
     with self.assertRaises(ValueError):

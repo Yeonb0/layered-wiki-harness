@@ -71,11 +71,11 @@ def _placement_properties(mode: str, source_layer: str, CandidateIds: list[str])
     LinkSchema = {"type": "array", "maxItems": len(CandidateIds), "items": {"type": "string", "enum": list(CandidateIds)}}
   else:
     LinkSchema = {"type": "array", "maxItems": 0}
-  # 고정 결정 : 층별 분리 모드에서 출처 층보다 위 새 노트 금지 - 스키마 enum 으로도 막는다
+  # 사용자 결정 2026-10-16 (가-2) : 정답에 하향 배치가 없으므로 전 층 모드도 출처 층 이상만, 층별 분리 모드는 출처 층 하나만 - 스키마 enum 으로도 막는다
   if mode == "all_layers":
-    Layers = list(LAYER_ORDER)
+    Layers = LAYER_ORDER[LAYER_ORDER.index(source_layer):]
   else:
-    Layers = LAYER_ORDER[: LAYER_ORDER.index(source_layer) + 1]
+    Layers = [source_layer]
   return {
     "layer": {"type": "string", "enum": Layers},
     "upward_links": dict(LinkSchema),
