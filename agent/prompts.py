@@ -64,7 +64,8 @@ def _link_schema(Ids: list[str]) -> dict:
   # 연기 시험 103단계에서 후보 0개 배치 출력이 512 토큰에서 잘림 - 링크 대상을 형식으로 막는다
   if Ids:
     return {"type": "array", "maxItems": len(Ids), "items": {"type": "string", "enum": list(Ids)}}
-  return {"type": "array", "maxItems": 0}
+  # llama.cpp json-schema-to-grammar ( b10453 ) 는 items 없는 array 의 maxItems 를 무시하고 임의 배열을 허용한다 - 135단계 층별 분리 배치 실패 6건의 원인
+  return {"type": "array", "maxItems": 0, "items": {"type": "string"}}
 
 
 def _placement_properties(mode: str, source_layer: str, Candidates: list) -> dict:

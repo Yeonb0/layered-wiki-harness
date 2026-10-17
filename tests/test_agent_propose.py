@@ -370,7 +370,7 @@ class PlaceSchemaTest(unittest.TestCase):
   def test_links_without_candidates_allow_only_empty_list(self) -> None:
     Props = place_schema("all_layers", "팀", [])["properties"]
     for Key in ("upward_links", "downward_links"):
-      self.assertEqual(Props[Key], {"type": "array", "maxItems": 0})
+      self.assertEqual(Props[Key], {"type": "array", "maxItems": 0, "items": {"type": "string"}})
 
   def test_rationale_has_max_length(self) -> None:
     self.assertEqual(place_schema("all_layers", "팀", [])["properties"]["rationale"], {"type": "string", "maxLength": 200})
@@ -389,7 +389,7 @@ class PlaceSchemaTest(unittest.TestCase):
     First = Chat.Calls[1]["schema"]["properties"]
     Second = Chat.Calls[2]["schema"]["properties"]
     # 첫째 노트는 볼트가 비어 후보가 없고 둘째 노트의 후보는 첫째 노트뿐이다
-    self.assertEqual(First["upward_links"], {"type": "array", "maxItems": 0})
+    self.assertEqual(First["upward_links"], {"type": "array", "maxItems": 0, "items": {"type": "string"}})
     self.assertEqual(Second["upward_links"]["items"]["enum"], ["문서A#n0"])
     self.assertEqual(Second["downward_links"]["maxItems"], 1)
 

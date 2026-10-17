@@ -2,7 +2,7 @@ import json
 import unittest
 
 from agent.llm_client import ChatResult, GenerationConfig
-from agent.prompts import b1_schema, place_schema
+from agent.prompts import assign_schema, b1_schema, decompose_schema, place_schema
 from agent.propose import run_propose_doc
 from agent.types import SourceDoc, SourceSegment
 from retrieval.search import Retriever
@@ -14,7 +14,7 @@ _OWNERS = {"주인A"}
 _BLOCK = "합성 층 정의 블록\n- 합성 조항"
 _BLOCK_SHA = "0" * 64
 _CONFIG = GenerationConfig(temperature=0.0, seed=1, max_tokens=64, enable_thinking=False)
-_EMPTY = {"type": "array", "maxItems": 0}
+_EMPTY = {"type": "array", "maxItems": 0, "items": {"type": "string"}}
 
 
 def _cand(Id: str, Layer: str) -> Candidate:
@@ -137,6 +137,58 @@ class RegressionTest(unittest.TestCase):
     PlaceSchema = Schemas[1]
     self.assertEqual(_enum(PlaceSchema["properties"]["upward_links"]), ["앞노트"])
     self.assertEqual(PlaceSchema["properties"]["downward_links"], _EMPTY)
+
+
+def _array_violations(Schema, Path="$") -> list[str]:
+  # type 이 array 인 dict 는 items 가 있어야 한다 - 위반한 경로를 모은다
+  Found = []
+  if isinstance(Schema, dict):
+    if Schema.get("type") == "array" and "items" not in Schema:
+      Found.append(Path)
+    for Key, Value in Schema.items():
+      Found += _array_violations(Value, f"{Path}.{Key}")
+  elif isinstance(Schema, list):
+    for Index, Value in enumerate(Schema):
+      Found += _array_violations(Value, f"{Path}[{Index}]")
+  return Found
+
+
+class SchemaArrayItemsTest(unittest.TestCase):
+  # 135단계 제안 실행 집계 : llama.cpp 문법 변환이 items 없는 array 의 maxItems 를 무시한다 - 모든 array 에 items 가 있어야 한다
+  def _assert_items_everywhere(self, Schema, Label) -> None:
+    self.assertEqual(_array_violations(Schema), [], f"items 없는 array : {Label}")
+
+  def _combos(self):
+    # 픽스처일 뿐이며 규칙과 무관하다 - 합성 후보다
+    Layers = ["개인", "팀", "전사"]
+    for Source in Layers:
+      yield "all_layers", Source, []
+      for Layer in Layers:
+        yield "all_layers", Source, [_cand("c", Layer)]
+      yield "all_layers", Source, [_cand("c0", "개인"), _cand("c1", "팀"), _cand("c2", "전사")]
+      yield "split_by_layer", Source, []
+      yield "split_by_layer", Source, [_cand("c", Source)]
+
+  def test_assign_and_decompose_schemas_have_items_on_every_array(self) -> None:
+    self._assert_items_everywhere(assign_schema(["S1", "S2"]), "assign")
+    self._assert_items_everywhere(decompose_schema(["S1", "S2"]), "decompose")
+
+  def test_place_and_b1_schemas_have_items_on_every_array(self) -> None:
+    Count = 0
+    for Mode, Source, Candidates in self._combos():
+      Label = f"{Mode} {Source} {[(Cand.id, Cand.layer) for Cand in Candidates]}"
+      # 이 조합은 ValueError 가 나지 않아야 한다 - 잡지 않고 그대로 실패시킨다
+      self._assert_items_everywhere(place_schema(Mode, Source, Candidates), f"place {Label}")
+      self._assert_items_everywhere(b1_schema(["S1", "S2"], Mode, Source, Candidates), f"b1 {Label}")
+      Count += 1
+    self.assertEqual(Count, 3 * (1 + 3 + 1 + 1 + 1))
+
+  def test_split_by_layer_downward_links_is_exactly_empty_string_array(self) -> None:
+    Expected = {"type": "array", "maxItems": 0, "items": {"type": "string"}}
+    for Source in ("개인", "팀", "전사"):
+      for Candidates in ([], [_cand("c", Source)]):
+        Props = place_schema("split_by_layer", Source, Candidates)["properties"]
+        self.assertEqual(Props["downward_links"], Expected)
 
 
 if __name__ == "__main__":
