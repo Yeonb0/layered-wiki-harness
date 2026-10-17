@@ -1,12 +1,14 @@
 import argparse
 import json
 import os
+import re
 import threading
 import time
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 from agent.layer_block import load_layer_block
 from agent.llm_client import GenerationConfig, chat
@@ -40,6 +42,13 @@ CONDITION = "제안"
 PROGRESS_EVERY = 10
 # 시연 앞단 ( 사용자 결정 2026-10-16 Dify 필수 ) : 요청 본문이 크면 메모리를 먹으므로 상한을 둔다
 MAX_BODY_BYTES = 4096
+# 조회 한 번이 squid read_timeout 2분 안에 끝나야 한다
+MAX_WAIT_SECONDS = 60
+# 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
+_JOB_PATH = re.compile(r"/jobs/([0-9a-f]{32})")
+_WAIT_VALUE = re.compile(r"[0-9]+")
+# 본문 읽기에 실패해 이미 응답을 보냈다는 표지
+_BAD_BODY = object()
 
 
 def _utc_now() -> str:
@@ -142,6 +151,11 @@ class DemoApp:
         print_fn(f"load propose_{Mode} embedded=0/0")
       self.cells[Mode] = {"notes": Notes, "retriever": Retr}
     self.lock = threading.Lock()
+    # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
+    self.jobs = {}
+    # 잠금을 잡는 일과 지금 도는 job_id 를 적는 일이 한 덩어리여야 409 응답이 도는 작업을 정확히 가리킨다
+    self.meta_lock = threading.Lock()
+    self.current_job_id = None
 
   def health(self) -> dict:
     return {
@@ -235,15 +249,22 @@ class DemoApp:
         )
     return "\n".join(Lines)
 
-  def run(self, body) -> tuple[int, dict]:
+  def _check_request(self, body):
+    # run 과 submit 이 같은 검증 · 같은 오류 응답을 쓰도록 한 곳에 둔다 - 오류면 ( 응답, None, None )
     if not isinstance(body, dict) or not isinstance(body.get("doc_id"), str) or not isinstance(body.get("mode"), str):
-      return 400, {"ok": False, "error_type": "BadRequest", "message": "본문은 doc_id · mode 문자열을 가진 JSON 이어야 한다"}
+      return (400, {"ok": False, "error_type": "BadRequest", "message": "본문은 doc_id · mode 문자열을 가진 JSON 이어야 한다"}), None, None
     DocId, Mode = body["doc_id"], body["mode"]
     # 시연 앞단 ( 사용자 결정 2026-10-16 Dify 필수 ) : 실행에 없던 문서는 기본 볼트와 대응이 없어 404 로 돌려준다
     if DocId not in self.docs:
-      return 404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 doc_id"}
+      return (404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 doc_id"}), None, None
     if Mode not in self.cells:
-      return 400, {"ok": False, "error_type": "BadRequest", "message": f"불러온 모드가 아니다: {list(self.cells)}"}
+      return (400, {"ok": False, "error_type": "BadRequest", "message": f"불러온 모드가 아니다: {list(self.cells)}"}), None, None
+    return None, DocId, Mode
+
+  def run(self, body) -> tuple[int, dict]:
+    Error, DocId, Mode = self._check_request(body)
+    if Error is not None:
+      return Error
     # 시연 앞단 ( 사용자 결정 2026-10-16 Dify 필수 ) : 생성 서버 슬롯이 1개라 동시에 두 요청을 처리하면 서로 느려지거나 실패한다
     if not self.lock.acquire(blocking=False):
       return 409, {"ok": False, "error_type": "Busy", "message": "다른 요청을 처리 중이다"}
@@ -251,6 +272,73 @@ class DemoApp:
       return self._run_locked(DocId, Mode)
     finally:
       self.lock.release()
+
+  # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
+  def submit(self, body) -> tuple[int, dict]:
+    Error, DocId, Mode = self._check_request(body)
+    if Error is not None:
+      return Error
+    JobId = uuid.uuid4().hex
+    Job = {
+      "job_id": JobId, "doc_id": DocId, "mode": Mode, "status": "running", "submitted_at_utc": _utc_now(),
+      "started_monotonic": time.monotonic(), "event": threading.Event(), "http_status": None, "result": None,
+    }
+    Job["thread"] = threading.Thread(target=self._job_main, args=(Job,), daemon=True)
+    with self.meta_lock:
+      if not self.lock.acquire(blocking=False):
+        return 409, {
+          "ok": False, "error_type": "Busy", "message": "다른 요청을 처리 중이다", "running_job_id": self.current_job_id,
+        }
+      self.current_job_id = JobId
+      # 409 의 running_job_id 를 바로 조회해도 404 가 나지 않도록 레코드를 잠금과 같은 덩어리 안에서 등록한다
+      self.jobs[JobId] = Job
+    try:
+      Job["thread"].start()
+    except BaseException:
+      # 스레드를 못 띄우면 잠금이 영영 잡혀 있고 레코드가 running 으로 남는다
+      del self.jobs[JobId]
+      with self.meta_lock:
+        self.current_job_id = None
+        self.lock.release()
+      raise
+    return 202, {"ok": True, "job_id": JobId, "status": "running"}
+
+  def _job_main(self, Job: dict) -> None:
+    try:
+      Status, Result = self._run_locked(Job["doc_id"], Job["mode"])
+      Job["http_status"] = Status
+      Job["result"] = Result
+      Job["status"] = "completed" if Status == 200 else "failed"
+    except BaseException as Error:
+      # 종료 신호도 레코드에는 실패로 남기고 다시 올린다
+      Job["result"] = {"ok": False, "error_type": type(Error).__name__, "message": str(Error)}
+      Job["status"] = "failed"
+      raise
+    finally:
+      # 어떤 경로로 끝나든 잠금을 풀고 완료 이벤트를 세워야 레코드가 running 으로 남지 않는다
+      with self.meta_lock:
+        self.current_job_id = None
+        self.lock.release()
+      Job["event"].set()
+
+  # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
+  def job_status(self, job_id: str, wait_seconds: int) -> tuple[int, dict]:
+    if not isinstance(wait_seconds, int) or isinstance(wait_seconds, bool) or not 0 <= wait_seconds <= MAX_WAIT_SECONDS:
+      raise ValueError(f"wait_seconds 는 0 ~ {MAX_WAIT_SECONDS} 정수여야 한다: {wait_seconds!r}")
+    Job = self.jobs.get(job_id)
+    if Job is None:
+      return 404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 job_id"}
+    if Job["event"].wait(wait_seconds):
+      Body = {
+        "job_id": job_id, "status": Job["status"], "doc_id": Job["doc_id"], "mode": Job["mode"],
+        "http_status": Job["http_status"], "result": Job["result"],
+      }
+    else:
+      Body = {
+        "job_id": job_id, "status": "running", "doc_id": Job["doc_id"], "mode": Job["mode"],
+        "elapsed_s": round(time.monotonic() - Job["started_monotonic"], 1),
+      }
+    return 200, self._mask(Body)
 
   def _run_locked(self, DocId: str, Mode: str) -> tuple[int, dict]:
     Doc = self.docs[DocId]
@@ -357,12 +445,28 @@ def make_handler(App: DemoApp):
       elif self.path == "/docs":
         self._send(200, App.doc_list())
       else:
-        self._send(404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"})
+        # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
+        Parts = urlsplit(self.path)
+        Match = _JOB_PATH.fullmatch(Parts.path)
+        if Match is None:
+          self._send(404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"})
+          return
+        Wait = self._parse_wait(Parts.query)
+        if Wait is None:
+          return
+        Status, Obj = App.job_status(Match.group(1), Wait)
+        self._send(Status, Obj)
 
-    def do_POST(self) -> None:
-      if self.path != "/run":
-        self._send(404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"})
-        return
+    def _parse_wait(self, Query: str):
+      # wait 는 없으면 0, 0 ~ MAX_WAIT_SECONDS 정수 하나만 받는다 - 그 밖은 400 을 보내고 None
+      Values = parse_qs(Query, keep_blank_values=True).get("wait", ["0"])
+      if len(Values) != 1 or not _WAIT_VALUE.fullmatch(Values[0]) or int(Values[0]) > MAX_WAIT_SECONDS:
+        self._send(400, {"ok": False, "error_type": "BadRequest", "message": f"wait 는 0 ~ {MAX_WAIT_SECONDS} 정수 하나여야 한다"})
+        return None
+      return int(Values[0])
+
+    def _read_json_body(self):
+      # POST /run 과 POST /jobs 가 같은 길이 · JSON 검사를 쓴다 - 오류면 400 을 보내고 _BAD_BODY ( JSON null 도 정상 본문이라 None 을 쓰지 않는다 )
       try:
         Length = int(self.headers.get("Content-Length", ""))
       except ValueError:
@@ -370,13 +474,21 @@ def make_handler(App: DemoApp):
       # 길이를 모르거나 상한을 넘는 본문은 읽지 않는다
       if Length < 0 or Length > MAX_BODY_BYTES:
         self._send(400, {"ok": False, "error_type": "BadRequest", "message": "본문 길이가 없거나 너무 크다"})
-        return
+        return _BAD_BODY
       try:
-        Body = json.loads(self.rfile.read(Length).decode("utf-8"))
+        return json.loads(self.rfile.read(Length).decode("utf-8"))
       except (UnicodeDecodeError, json.JSONDecodeError):
         self._send(400, {"ok": False, "error_type": "BadRequest", "message": "JSON 이 아니다"})
+        return _BAD_BODY
+
+    def do_POST(self) -> None:
+      if self.path not in ("/run", "/jobs"):
+        self._send(404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"})
         return
-      Status, Obj = App.run(Body)
+      Body = self._read_json_body()
+      if Body is _BAD_BODY:
+        return
+      Status, Obj = (App.run if self.path == "/run" else App.submit)(Body)
       self._send(Status, Obj)
 
     def log_message(self, Format, *Args) -> None:

@@ -414,6 +414,194 @@ class HttpTest(DemoBase):
     self.assertEqual(Call("/nope")[0], 404)
 
 
+class Gate:
+  # 생성 함수를 Event 로 막아 두는 합성 chat_fn - 서버를 부르지 않는다
+  def __init__(self) -> None:
+    self.entered = threading.Event()
+    self.release = threading.Event()
+
+  def __call__(self, *Args, **Kwargs):
+    self.entered.set()
+    if not self.release.wait(10):
+      raise RuntimeError("합성 게이트가 풀리지 않았다")
+    return fake_chat(*Args, **Kwargs)
+
+
+class JobsBase(DemoBase):
+  def start(self, Chat=fake_chat) -> DemoApp:
+    App = self.app(Chat=Chat)
+    # 어떤 테스트든 끝날 때 작업 스레드를 join 해 스레드가 남지 않게 한다
+    self.addCleanup(self.join_jobs, App)
+    return App
+
+  def join_jobs(self, App: DemoApp) -> None:
+    for Job in list(App.jobs.values()):
+      Job["thread"].join(10)
+      self.assertFalse(Job["thread"].is_alive())
+
+  def manifest_statuses(self) -> list[str]:
+    Root = os.path.join(self.DemoWork, "demo_api")
+    Result = []
+    for Name in sorted(os.listdir(Root)):
+      with open(os.path.join(Root, Name, "request_manifest.json"), encoding="utf-8") as File:
+        Result.append(json.load(File)["status"])
+    return Result
+
+  def finish(self, App: DemoApp, Body: dict) -> dict:
+    Status, Submitted = App.submit(Body)
+    self.assertEqual(Status, 202)
+    return App.job_status(Submitted["job_id"], 10)[1]
+
+
+class JobsFlowTest(JobsBase):
+  def test_submit_poll_conflict_complete_and_resubmit(self) -> None:
+    Gate_ = Gate()
+    App = self.start(Chat=Gate_)
+    # 정리 순서는 나중에 등록한 것부터라 게이트를 먼저 풀고 join 한다
+    self.addCleanup(Gate_.release.set)
+    Status, Submitted = App.submit({"doc_id": _DOCS[2][0], "mode": "all_layers"})
+    self.assertEqual(Status, 202)
+    self.assertEqual(sorted(Submitted), ["job_id", "ok", "status"])
+    self.assertEqual((Submitted["ok"], Submitted["status"]), (True, "running"))
+    JobId = Submitted["job_id"]
+    self.assertRegex(JobId, r"^[0-9a-f]{32}$")
+    self.assertTrue(Gate_.entered.wait(5))
+    Status, Running = App.job_status(JobId, 0)
+    self.assertEqual(Status, 200)
+    self.assertEqual(sorted(Running), ["doc_id", "elapsed_s", "job_id", "mode", "status"])
+    self.assertEqual(Running["status"], "running")
+    Status, Busy = App.submit({"doc_id": _DOCS[3][0], "mode": "all_layers"})
+    self.assertEqual(Status, 409)
+    self.assertEqual(Busy["running_job_id"], JobId)
+    self.assertEqual(App.job_status(Busy["running_job_id"], 0)[0], 200)
+    self.assertEqual(App.run({"doc_id": _DOCS[3][0], "mode": "all_layers"})[0], 409)
+    Gate_.release.set()
+    Status, Done = App.job_status(JobId, 10)
+    self.assertEqual(Status, 200)
+    self.assertEqual(sorted(Done), ["doc_id", "http_status", "job_id", "mode", "result", "status"])
+    self.assertEqual((Done["status"], Done["http_status"]), ("completed", 200))
+    Direct = App.run({"doc_id": _DOCS[2][0], "mode": "all_layers"})[1]
+    self.assertEqual(sorted(Done["result"]), sorted(Direct))
+    self.assertEqual(sorted(Done["result"]["notes"][0]), sorted(Direct["notes"][0]))
+    self.assertTrue(Done["result"]["ok"])
+    Again = self.finish(App, {"doc_id": _DOCS[3][0], "mode": "all_layers"})
+    self.assertEqual(Again["status"], "completed")
+
+  def test_exception_makes_job_failed_with_500_and_aborted_manifest(self) -> None:
+    def Boom(*Args, **Kwargs):
+      raise RuntimeError("합성 실패")
+
+    App = self.start(Chat=Boom)
+    Failed = self.finish(App, {"doc_id": _DOCS[2][0], "mode": "all_layers"})
+    self.assertEqual((Failed["status"], Failed["http_status"]), ("failed", 500))
+    self.assertEqual(Failed["result"]["error_type"], "RuntimeError")
+    self.assertEqual(self.manifest_statuses(), ["aborted"])
+    App.chat_fn = fake_chat
+    Next = self.finish(App, {"doc_id": _DOCS[3][0], "mode": "all_layers"})
+    self.assertEqual(Next["status"], "completed")
+
+  def test_keyboard_interrupt_makes_job_failed_and_releases_lock(self) -> None:
+    def Interrupt(*Args, **Kwargs):
+      raise KeyboardInterrupt()
+
+    Seen = []
+    # 작업 스레드에서 다시 올라온 종료 신호가 stderr 로 새지 않게 훅으로 받는다
+    with mock.patch.object(threading, "excepthook", lambda Args: Seen.append(Args.exc_type)):
+      App = self.start(Chat=Interrupt)
+      Failed = self.finish(App, {"doc_id": _DOCS[2][0], "mode": "all_layers"})
+      for Job in list(App.jobs.values()):
+        Job["thread"].join(10)
+    self.assertEqual(Failed["status"], "failed")
+    self.assertEqual(Failed["result"]["error_type"], "KeyboardInterrupt")
+    self.assertEqual(Seen, [KeyboardInterrupt])
+    self.assertEqual(self.manifest_statuses(), ["aborted"])
+    self.assertIsNone(App.current_job_id)
+    App.chat_fn = fake_chat
+    Next = self.finish(App, {"doc_id": _DOCS[3][0], "mode": "all_layers"})
+    self.assertEqual(Next["status"], "completed")
+
+
+class JobsValidationTest(JobsBase):
+  def test_submit_validation_errors_match_run(self) -> None:
+    App = self.start()
+    for Body in (
+      {"doc_id": "없는문서", "mode": "all_layers"}, {"doc_id": _DOCS[0][0], "mode": "없는모드"}, {"doc_id": _DOCS[0][0]}, [],
+    ):
+      self.assertEqual(App.submit(Body), App.run(Body))
+    self.assertEqual(App.jobs, {})
+    self.assertFalse(os.path.exists(os.path.join(self.DemoWork, "demo_api")))
+
+  def test_unknown_job_id_is_404_and_bad_wait_raises_value_error(self) -> None:
+    App = self.start()
+    self.assertEqual(App.job_status("0" * 32, 0)[0], 404)
+    for Wait in (-1, 61, "abc", True):
+      with self.assertRaises(ValueError):
+        App.job_status("0" * 32, Wait)
+
+  def test_status_response_has_no_owner_names(self) -> None:
+    def Chat(messages, model_id, config, response_schema, *, timeout_seconds):
+      Props = response_schema["properties"]
+      if "assign" in Props:
+        return _result({"assign": {Label: 1 for Label in Props["assign"]["required"]}, "titles": ["샘플가 의 노트"]})
+      return fake_chat(messages, model_id, config, response_schema, timeout_seconds=timeout_seconds)
+
+    App = self.start(Chat=Chat)
+    Done = self.finish(App, {"doc_id": _DOCS[0][0], "mode": "all_layers"})
+    self.assertEqual(Done["status"], "completed")
+    Text = json.dumps(Done, ensure_ascii=False)
+    for Name in _OWNERS:
+      self.assertNotIn(Name, Text)
+    self.assertIn("주인A", Text)
+
+
+class JobsHttpTest(JobsBase):
+  def serve(self, App: DemoApp) -> str:
+    Server = make_server(App, "127.0.0.1", 0)
+    Thread = threading.Thread(target=Server.serve_forever, daemon=True)
+    Thread.start()
+    self.addCleanup(Thread.join, 5)
+    self.addCleanup(Server.server_close)
+    self.addCleanup(Server.shutdown)
+    return f"http://127.0.0.1:{Server.server_address[1]}"
+
+  def call(self, Base: str, Path: str, Body=None):
+    Request = urllib.request.Request(
+      Base + Path, data=None if Body is None else json.dumps(Body).encode("utf-8"),
+      headers={"Content-Type": "application/json"}, method="GET" if Body is None else "POST",
+    )
+    try:
+      with urllib.request.urlopen(Request, timeout=15) as Response:
+        return Response.status, json.loads(Response.read().decode("utf-8"))
+    except urllib.error.HTTPError as Error:
+      with Error:
+        return Error.code, json.loads(Error.read().decode("utf-8"))
+
+  def test_post_jobs_then_get_until_completed(self) -> None:
+    App = self.start()
+    Base = self.serve(App)
+    Status, Submitted = self.call(Base, "/jobs", {"doc_id": _DOCS[2][0], "mode": "all_layers"})
+    self.assertEqual((Status, Submitted["status"]), (202, "running"))
+    Status, Done = self.call(Base, f"/jobs/{Submitted['job_id']}?wait=10")
+    self.assertEqual((Status, Done["status"], Done["http_status"]), (200, "completed", 200))
+    self.assertTrue(Done["result"]["ok"])
+    self.assertEqual(self.call(Base, "/jobs", {"doc_id": "없는문서", "mode": "all_layers"})[0], 404)
+
+  def test_wait_query_and_path_rules(self) -> None:
+    App = self.start()
+    Base = self.serve(App)
+    Status, Submitted = self.call(Base, "/jobs", {"doc_id": _DOCS[2][0], "mode": "all_layers"})
+    Path = f"/jobs/{Submitted['job_id']}"
+    for Query in ("?wait=-1", "?wait=61", "?wait=abc", "?wait=1&wait=2", "?wait=", "?wait=1.5"):
+      self.assertEqual(self.call(Base, Path + Query)[0], 400, Query)
+    self.assertEqual(self.call(Base, Path + "?wait=0")[0], 200)
+    self.assertEqual(self.call(Base, Path)[0], 200)
+    self.assertEqual(self.call(Base, f"/jobs/{'0' * 32}?wait=0")[0], 404)
+    for Bad in ("/jobs/", "/jobs", f"/jobs/{Submitted['job_id'].upper()}", f"/jobs/{Submitted['job_id']}/", "/jobs/abc"):
+      self.assertEqual(self.call(Base, Bad)[0], 404, Bad)
+    self.assertEqual(self.call(Base, "/health")[0], 200)
+    self.call(Base, Path + "?wait=10")
+
+
 class CliTest(DemoBase):
   def test_help_exits_zero(self) -> None:
     with redirect_stdout(io.StringIO()):
