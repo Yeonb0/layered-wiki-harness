@@ -13,6 +13,8 @@ import os
 import re
 import zipfile
 
+from labeling.gold import read_membership
+
 RULES_VERSION = "segment_rules_v1.1"
 
 PAGE_ID_RE = re.compile(r" ([0-9a-f]{32})\.md$")
@@ -35,6 +37,13 @@ SOFT_ENG_KEEP_PREFIX = "소프트웨어 공학/과제/"
 SOFT_ENG_KEEP_FILES = {"소프트웨어 공학/00_공용_기준문서.md"}
 
 SOURCES = {"lecture_note", "team_1jo", "team_soft_eng"}
+
+# 기존 형식 ( team_1jo_personal_owners ) 의 출처 표 - 출처 id : ( 층, 그룹, 개인 페이지 판정 대상 )
+_LEGACY_TABLE = {
+  "lecture_note": ("전사", None, False),
+  "team_soft_eng": ("팀", "소공", False),
+  "team_1jo": ("팀", "1조", True),
+}
 
 
 def load_json(path):
@@ -219,6 +228,76 @@ def source_layer(source, path, Owners):
   raise ValueError(f"알 수 없는 출처 {source}")
 
 
+def source_table(Layer_cfg):
+  # 사용자 결정 2026-10-22 : 합성 시연 코퍼스도 Notion 내보내기 모양으로 만들고 같은 세그먼트 규칙을 거친다 - 출처 표를 설정에서 읽는다
+  if not isinstance(Layer_cfg, dict):
+    raise ValueError("source_layers.json 이 객체가 아니다")
+  HasLegacy = "team_1jo_personal_owners" in Layer_cfg
+  HasNew = "personal_owner_teams" in Layer_cfg
+  HasSources = "sources" in Layer_cfg
+  # 두 형식의 키가 섞이면 어느 쪽 표를 써야 할지 알 수 없다
+  if HasLegacy and HasNew:
+    raise ValueError("source_layers.json 에 두 형식의 주인 키가 함께 있다")
+  if HasLegacy:
+    # 기존 형식에 sources 가 있으면 기존 표와 새 표 중 어느 쪽인지 알 수 없다
+    if HasSources:
+      raise ValueError("기존 형식 source_layers.json 에 sources 가 있다")
+    # 기존 형식 표는 SOURCES 와 같은 출처만 갖는다
+    if set(_LEGACY_TABLE) != SOURCES:
+      raise ValueError("기존 출처 표와 SOURCES 가 다르다")
+    return {s: _LEGACY_TABLE[s] for s in sorted(SOURCES)}
+  if not HasNew:
+    raise ValueError("source_layers.json 에 주인 키가 없다")
+  # 새 형식에 sources 가 없으면 출처 표를 코드의 기본값으로 채우게 된다 - 기본값은 넣지 않는다
+  if not HasSources:
+    raise ValueError("새 형식 source_layers.json 에 sources 가 없다")
+  Sources = Layer_cfg["sources"]
+  if not isinstance(Sources, dict) or not Sources:
+    raise ValueError("sources 는 비어 있지 않은 객체여야 한다")
+  Table = {}
+  for Name, Entry in Sources.items():
+    if not isinstance(Name, str) or not Name:
+      raise ValueError(f"출처 id 가 비어 있지 않은 문자열이 아니다: {Name!r}")
+    if not isinstance(Entry, dict) or any(Key not in Entry for Key in ("layer", "group", "personal_pages")):
+      raise ValueError(f"출처 {Name} 에 layer · group · personal_pages 가 모두 있어야 한다")
+    Layer, Group, Personal = Entry["layer"], Entry["group"], Entry["personal_pages"]
+    # 개인은 출처 층이 될 수 없다 - 개인 페이지는 팀 출처 안에서 가려낸다
+    if Layer not in ("팀", "전사"):
+      raise ValueError(f"출처 {Name} 의 layer 는 팀 또는 전사여야 한다: {Layer!r}")
+    if Layer == "팀" and (not isinstance(Group, str) or not Group):
+      raise ValueError(f"팀 출처 {Name} 의 group 은 비어 있지 않은 문자열이어야 한다")
+    if Layer == "전사" and Group is not None:
+      raise ValueError(f"전사 출처 {Name} 의 group 은 null 이어야 한다")
+    if not isinstance(Personal, bool):
+      raise ValueError(f"출처 {Name} 의 personal_pages 는 불리언이어야 한다")
+    if Personal and Layer != "팀":
+      raise ValueError(f"전사 출처 {Name} 은 personal_pages 가 true 일 수 없다")
+    Table[Name] = (Layer, Group, Personal)
+  return Table
+
+
+def source_placement(source, path, Table, Membership_):
+  # 사용자 결정 2026-10-22 : 개인 페이지는 그 페이지가 놓인 워크스페이스의 팀을 팀 맥락으로 가진다 - source_layer 는 기존 호출부 때문에 그대로 둔다
+  if source not in Table:
+    raise ValueError(f"알 수 없는 출처 {source}")
+  Layer, Group, Personal = Table[source]
+  if Personal:
+    Parts = path.split("/")
+    if len(Parts) >= 2:
+      owner = PAGE_ID_RE.sub("", Parts[1])
+      if owner.endswith(".md"):
+        owner = owner[:-3]
+      if owner in Membership_.teams_by_owner:
+        # 기존 형식은 출력에 team 키를 만들지 않으려고 None 을 돌려준다
+        if Membership_.legacy_team is not None:
+          return "개인", owner, None
+        # 사용자 결정 2026-10-22 : 주인이 속하지 않은 팀의 워크스페이스에 그 주인의 개인 페이지가 있으면 멈춘다
+        if Group not in Membership_.teams_by_owner[owner]:
+          raise ValueError(f"개인 페이지가 주인의 소속 팀이 아닌 워크스페이스에 있다: {path}")
+        return "개인", owner, Group
+  return Layer, Group, None
+
+
 def process_doc(raw_text, Prop_keys, Stats):
   Lines = list(enumerate(raw_text.splitlines(), 1))
   Body, title, Props = split_title_and_properties(Lines, Prop_keys)
@@ -231,16 +310,16 @@ def run(corpus_root, out_dir):
   Selection = load_json(os.path.join(corpus_root, "selection", "lecture_subjects.json"))
   Layer_cfg = load_json(os.path.join(corpus_root, "selection", "source_layers.json"))
   Excluded_ids = set(Selection["excluded_pages"]["ids"])
-  Owners = set(Layer_cfg["team_1jo_personal_owners"])
-  if not Owners:
-    raise ValueError("개인 페이지 주인 목록이 비어 있음")
+  # 사용자 결정 2026-10-22 : 주인 목록은 소속 팀 표에서 읽는다 - 기존 설정은 출력이 바이트 단위로 같다
+  Table = source_table(Layer_cfg)
+  Membership_ = read_membership(os.path.join(corpus_root, "selection", "source_layers.json"))
 
   Segments, Docs, Excluded = [], [], []
   Seen_docs = set()
-  Stats = {s: collections.Counter() for s in SOURCES}
+  Stats = {s: collections.Counter() for s in Table}
   for F in Manifest["files"]:
     source = F["source"]
-    if source not in SOURCES:
+    if source not in Table:
       raise ValueError(f"알 수 없는 출처 {source}")
     zpath = os.path.join(corpus_root, "snapshot1", F["path"])
     with open(zpath, "rb") as f:
@@ -272,20 +351,27 @@ def run(corpus_root, out_dir):
         if doc_id.startswith("att-") and title is not None and (os.path.dirname(path), title) in Page_titles:
           Excluded.append({"doc_id": doc_id, "source": source, "path": path, "reason": "E5_첨부중복"})
           continue
-        layer, group = source_layer(source, path, Owners)
-        Docs.append({
+        layer, group, team = source_placement(source, path, Table, Membership_)
+        Doc_row = {
           "doc_id": doc_id, "source": source, "path": path, "zip_sha256": F["sha256"],
           "layer": layer, "group": group, "title": title, "properties": Props,
           "raw_sha256": sha256_text(raw), "n_segments": len(Segs),
-        })
+        }
+        # team 은 새 형식 개인 행에만 기존 키 다음 맨 끝에 더한다
+        if team is not None:
+          Doc_row["team"] = team
+        Docs.append(Doc_row)
         for n, s in enumerate(Segs, 1):
           text = "\n".join(t for _, t in s)
-          Segments.append({
+          Seg_row = {
             "segment_id": f"{doc_id}#s{n}", "doc_id": doc_id, "seq": n,
             "source": source, "layer": layer, "group": group,
             "line_start": s[0][0], "line_end": s[-1][0],
             "text": text, "text_sha256": sha256_text(text),
-          })
+          }
+          if team is not None:
+            Seg_row["team"] = team
+          Segments.append(Seg_row)
 
   Titles = collections.Counter(d["title"] for d in Docs)
   Report = {
