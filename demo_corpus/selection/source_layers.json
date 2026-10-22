@@ -1,0 +1,43 @@
+{
+  "purpose": "합성 시연 코퍼스 ( 스냅샷 900 ) 의 출처 층 · 소속 팀 표. 이름은 전부 합성이다",
+  "decided_by": "사용자 2026-10-22 ( 팀1만 팀원A · 팀원B, 팀2만 팀원C · 팀원D, 둘 다 팀원E · 팀원F )",
+  "personal_owner_teams": {
+    "팀원A": [
+      "팀1"
+    ],
+    "팀원B": [
+      "팀1"
+    ],
+    "팀원C": [
+      "팀2"
+    ],
+    "팀원D": [
+      "팀2"
+    ],
+    "팀원E": [
+      "팀1",
+      "팀2"
+    ],
+    "팀원F": [
+      "팀1",
+      "팀2"
+    ]
+  },
+  "sources": {
+    "demo_studio": {
+      "layer": "전사",
+      "group": null,
+      "personal_pages": false
+    },
+    "demo_team1": {
+      "layer": "팀",
+      "group": "팀1",
+      "personal_pages": true
+    },
+    "demo_team2": {
+      "layer": "팀",
+      "group": "팀2",
+      "personal_pages": true
+    }
+  }
+}
