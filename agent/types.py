@@ -15,6 +15,8 @@ class SourceDoc:
   source_layer: str
   source_group: str | None
   segments: list[SourceSegment]
+  # 사용자 결정 2026-10-22 : 개인 문서의 팀 워크스페이스 - 기존 형식 코퍼스에는 없다
+  source_team: str | None = None
 
 
 @dataclass

@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime, timezone
 
-from labeling.gold import group_for, read_owners
+from labeling.gold import Membership, read_membership, visible_pairs_for
 from retrieval.search import LAYER_ORDER
 from runner.v2_sequential import DEFAULT_WORK_ROOT, REPO_DIR, _validate_out_dir, git_head_commit
 
@@ -141,8 +141,9 @@ def build_public(vault_path, out_dir, work_root=DEFAULT_WORK_ROOT, commit_fn=Non
   return Manifest
 
 
-def visible_pairs(viewer_layer: str, viewer_group, owners: set) -> set:
-  # 로컬 보기 (C′) : 보는 사람 층 이상인 층마다 group_for 로 그룹을 정한다 ( 가시 범위 확정 결정과 같은 규칙 )
+def visible_pairs(viewer_layer: str, viewer_group, owners: Membership) -> set:
+  # 로컬 보기 (C′) : 가시 쌍은 검색과 같은 함수에서 나온다 ( 가시 범위 확정 결정과 같은 규칙 )
+  # 사용자 결정 2026-10-22 : 보기에서 개인은 자기가 속한 모든 팀의 팀 노트를 본다 - 기존 설정은 결과가 같다
   if viewer_layer not in LAYER_ORDER:
     raise ValueError(f"알 수 없는 viewer layer: {viewer_layer!r}")
   # 개인 · 팀 보기는 그룹이 없으면 아무 노트도 안 보이는 빈 보기가 조용히 만들어진다
@@ -150,8 +151,7 @@ def visible_pairs(viewer_layer: str, viewer_group, owners: set) -> set:
     raise ValueError("전사 보기는 viewer group 을 받지 않는다")
   if viewer_layer != PUBLIC_LAYER and not viewer_group:
     raise ValueError(f"{viewer_layer} 보기는 viewer group 이 필요하다")
-  Seg = {"layer": viewer_layer, "group": viewer_group, "segment_id": "<viewer>"}
-  return {(Layer, group_for(Seg, Layer, owners)) for Layer in LAYER_ORDER[LAYER_ORDER.index(viewer_layer):]}
+  return visible_pairs_for(viewer_layer, viewer_group, owners)
 
 
 def build_view(
@@ -167,7 +167,7 @@ def build_view(
 ) -> dict:
   commit_fn = commit_fn or (lambda: git_head_commit(REPO_DIR))
   OutPath = _validate_out_dir(out_dir, work_root)
-  Owners = read_owners(source_layers_path)
+  Owners = read_membership(source_layers_path)
   Pairs = visible_pairs(viewer_layer, viewer_group, Owners)
   Notes = read_vault(vault_path)
   AllIds = {Note["note_id"] for Note in Notes}

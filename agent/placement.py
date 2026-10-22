@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 
 from agent.types import DownwardLink, NoteDraft, NoteRecord, PlacementVerdict, SourceDoc
-from labeling.gold import group_for
+from labeling.gold import Membership, note_group
 from retrieval.search import LAYER_ORDER
 
 MODES = ("all_layers", "split_by_layer")
@@ -96,11 +96,15 @@ def build_note_record(
   note_index: int,
   vault_size: int,
   LayerGroupById: dict,
-  Owners,
+  Owners: Membership,
 ) -> NoteRecord:
   NoteId = f"{doc.doc_id}#n{note_index}"
   # 노트 그룹 규칙은 정답 합성과 같은 함수를 그대로 쓴다 ( 규칙 복제 금지 )
-  Group = group_for({"layer": doc.source_layer, "group": doc.source_group, "segment_id": NoteId}, verdict.layer, Owners)
+  Seg = {"layer": doc.source_layer, "group": doc.source_group, "segment_id": NoteId}
+  # 사용자 결정 2026-10-22 : 개인 문서가 팀 층에 놓이면 그 문서가 놓인 팀 워크스페이스의 팀이 그룹이다
+  if doc.source_team is not None:
+    Seg["team"] = doc.source_team
+  Group = note_group(Seg, verdict.layer, Owners)
   Links = []
   for TargetId in verdict.downward_target_ids:
     # 결정 D2 : 하니스가 대상 노트의 층 · 그룹으로 채운다 - 모르는 대상은 멈춘다

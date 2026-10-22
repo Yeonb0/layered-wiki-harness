@@ -15,7 +15,7 @@ from agent.llm_client import LLM_ENDPOINT_ENV, GenerationConfig, chat
 from agent.placement import MODES
 from agent.propose import run_propose_doc
 from agent.types import SourceDoc, SourceSegment
-from labeling.gold import read_ids, read_jsonl, read_owners
+from labeling.gold import read_ids, read_jsonl, read_membership
 from retrieval.embeddings import EMBED_MAX_CHARS, EMBED_TIMEOUT_SECONDS, EMBEDDING_ENDPOINT_ENV
 from retrieval.search import EXCERPT_LENGTH, LAYER_ORDER, Retriever
 from runner.conditions import Condition, ConditionCell, build_interleaved_schedule
@@ -111,6 +111,12 @@ def load_source_docs(segments_path: str, docs_path: str, doc_ids_path: str, spli
     # 출처 층이 층 순서에 없으면 이후 층 규칙을 적용할 수 없다
     if Meta["layer"] not in LAYER_ORDER:
       raise ValueError(f"알 수 없는 layer: {Meta['layer']!r} ( {DocId} )")
+    # 사용자 결정 2026-10-22 : 팀 워크스페이스는 개인 문서에만 있다 - 다른 층의 team 은 입력 오류다
+    if "team" in Meta:
+      if Meta["layer"] != "개인":
+        raise ValueError(f"개인이 아닌 문서에 team 이 있다: {DocId}")
+      if not isinstance(Meta["team"], str) or not Meta["team"]:
+        raise ValueError(f"team 이 비어 있지 않은 문자열이 아니다: {DocId}")
     Segs = SegsById.get(DocId, [])
     # 세그먼트가 없으면 분해할 입력이 없다
     if not Segs:
@@ -129,12 +135,17 @@ def load_source_docs(segments_path: str, docs_path: str, doc_ids_path: str, spli
     # 세그먼트와 docs.jsonl 이 다르면 어느 쪽이 맞는지 알 수 없다
     if next(iter(Pairs)) != (Meta["layer"], Meta["group"]):
       raise ValueError(f"세그먼트의 layer · group 이 docs.jsonl 과 다르다: {DocId}")
+    # 사용자 결정 2026-10-22 : 세그먼트끼리 또는 docs.jsonl 과 팀이 다르면 노트 그룹이 문서마다 흔들린다
+    SegTeams = {Seg.get("team") for Seg in Segs}
+    if len(SegTeams) != 1 or next(iter(SegTeams)) != Meta.get("team"):
+      raise ValueError(f"세그먼트의 team 이 서로 다르거나 docs.jsonl 과 다르다: {DocId}")
     Docs.append(SourceDoc(
       doc_id=DocId,
       title=Meta["title"],
       source_layer=Meta["layer"],
       source_group=Meta["group"],
       segments=[SourceSegment(segment_id=S["segment_id"], seq=S["seq"], text=S["text"]) for S in Segs],
+      source_team=Meta.get("team"),
     ))
     RawSha[DocId] = Meta["raw_sha256"]
   return Docs, RawSha
@@ -238,7 +249,8 @@ def run_v2(
   OutPath = _validate_out_dir(out_dir, work_root)
 
   Docs, RawSha = load_source_docs(segments_path, docs_path, doc_ids_path, split_doc_ids_path, selection_path)
-  Owners = read_owners(source_layers_path)
+  # 사용자 결정 2026-10-22 : 층별 분리 검색과 보기에서 개인은 자기가 속한 모든 팀의 팀 노트를 본다 - 기존 설정은 결과가 같다
+  Owners = read_membership(source_layers_path)
   Block, BlockSha = load_layer_block(criteria_path, criteria_sha256)
   HarnessCommit = commit_fn()
 

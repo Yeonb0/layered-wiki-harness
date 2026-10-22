@@ -15,7 +15,7 @@ from agent.llm_client import GenerationConfig, chat
 from agent.placement import MODES
 from agent.propose import _to_document_record, run_propose_doc
 from agent.types import DownwardLink, NoteRecord
-from labeling.gold import read_owners
+from labeling.gold import read_membership
 from retrieval.search import Retriever
 from runner.v2_sequential import (
   DEFAULT_WORK_ROOT,
@@ -126,7 +126,9 @@ class DemoApp:
     if NotLoaded:
       raise ValueError(f"manifest 의 doc_order 에 있으나 적재되지 않은 문서: {NotLoaded}")
     self.docs = {Id: DocById[Id] for Id in DocOrder}
-    self.owners = read_owners(Args["source_layers"])
+    # 사용자 결정 2026-10-22 : 검색 · 배치는 소속 팀 표를 쓰고 이름 가림은 주인 집합을 그대로 쓴다
+    self.membership = read_membership(Args["source_layers"])
+    self.owners = set(self.membership.teams_by_owner)
     self.labels = owner_labels(self.owners)
     self.block, self.block_sha = load_layer_block(Args["criteria"], Args["criteria_sha256"])
     self.harness_commit = commit_fn()
@@ -388,7 +390,7 @@ class DemoApp:
         Doc, Mode, self.k, Retr, VaultNotes, LayerGroupById, self.chat_fn, self.model_id,
         GenerationConfig(temperature=TEMPERATURE, seed=self.gen_seed, max_tokens=self.decompose_max_tokens, enable_thinking=ENABLE_THINKING),
         GenerationConfig(temperature=TEMPERATURE, seed=self.gen_seed, max_tokens=self.place_max_tokens, enable_thinking=ENABLE_THINKING),
-        self.block, self.block_sha, self.owners, self.timeout_seconds, BaseLog,
+        self.block, self.block_sha, self.membership, self.timeout_seconds, BaseLog,
       )
       NewNotes = VaultNotes[BaseSize:]
       with open(os.path.join(RequestDir, "log.jsonl"), "a", encoding="utf-8") as File:

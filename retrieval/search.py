@@ -1,7 +1,7 @@
 import math
 from typing import Literal
 
-from labeling.gold import group_for
+from labeling.gold import Membership, visible_pairs_for
 from retrieval.embeddings import EmbedBackend, embed
 from retrieval.types import Candidate
 from vault.types import DocumentRecord
@@ -53,7 +53,7 @@ class Retriever:
     ]
 
   def search_visible(
-    self, query: str, k: int, mode: Mode, caller_layer: str, caller_group: str | None, owners: set
+    self, query: str, k: int, mode: Mode, caller_layer: str, caller_group: str | None, owners: Membership
   ) -> list[Candidate]:
     # mode 는 두 값뿐 - 다른 값은 가시 범위를 알 수 없다
     if mode not in ("all_layers", "split_by_layer"):
@@ -66,11 +66,9 @@ class Retriever:
       # 사용자 결정 2026-10-16 (나-2) : 그룹을 모르는 노트가 조용히 보이거나 숨는 것을 막는다
       if any(Group is UNKNOWN_GROUP for Group in self.Groups):
         raise ValueError("split_by_layer 색인에 그룹을 모르는 노트가 있다")
-      # 사용자 결정 2026-10-16 (나-2) : 허용 쌍 = 호출 층 이상 각 층 L 의 ( L, 정답 합성과 같은 그룹 규칙 ) - 규칙 복제 금지
-      Allowed = {
-        (Layer, group_for({"layer": caller_layer, "group": caller_group, "segment_id": "<caller>"}, Layer, owners))
-        for Layer in LAYER_ORDER[LAYER_ORDER.index(caller_layer) :]
-      }
+      # 사용자 결정 2026-10-16 (나-2) : 허용 쌍은 정답 합성과 같은 그룹 규칙에서 나온다 - 규칙 복제 금지
+      # 사용자 결정 2026-10-22 : 층별 분리 검색에서 개인은 자기가 속한 모든 팀의 팀 노트를 본다 - 기존 설정은 결과가 같다
+      Allowed = visible_pairs_for(caller_layer, caller_group, owners)
       Pool = [Entry for Entry in Pool if (Entry[0][0].layer, Entry[1]) in Allowed]
     QueryVector = embed(query, backend=self.embed_backend)
     Scored = [(_cosine_similarity(QueryVector, Vector), Record) for (Record, Vector), _ in Pool]

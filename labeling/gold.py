@@ -156,7 +156,8 @@ def build(segments_path, split_dir, split_name, labels_path, source_layers_path)
   # segment_id 가 겹치면 정답 행이 두 번 생긴다
   if len(set(SegIds)) != len(SegIds):
     raise ValueError("segments.jsonl 에 segment_id 중복이 있다")
-  Owners = read_owners(source_layers_path)
+  # 사용자 결정 2026-10-22 : 정답 그룹도 소속 팀 표로 정한다 - 기존 설정은 결과가 같다
+  Owners = read_membership(source_layers_path)
 
   for S in Segs:
     # 알 수 없는 source 는 라벨 대상인지 판정할 수 없다
@@ -232,7 +233,7 @@ def build(segments_path, split_dir, split_name, labels_path, source_layers_path)
       Golds.append(
         {
           "segment_id": S["segment_id"], "intrinsic_layer": Intrinsic, "source_layer": S["layer"], "source_group": S["group"],
-          "gold_layer": Gold, "gold_group": group_for(S, Gold, Owners),
+          "gold_layer": Gold, "gold_group": note_group(S, Gold, Owners),
           # 기준 §4 : 고유 층이 출처 층보다 낮아 올라간 세그먼트만 clamped
           "clamped": LAYER_RANK[Intrinsic] < LAYER_RANK[S["layer"]], "auto": False,
         }

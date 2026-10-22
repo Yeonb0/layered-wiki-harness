@@ -13,13 +13,20 @@ from agent.prompts import (
 )
 from agent.propose import run_propose_doc
 from agent.types import SourceDoc, SourceSegment
+from labeling.gold import Membership
 from retrieval.search import LAYER_ORDER, Retriever
 from retrieval.types import Candidate
+
+
+def _membership(Owners):
+  # 기존 형식과 같은 소속 표 - 주인 전원이 1조에 속한다 ( 사용자 결정 2026-10-22 )
+  return Membership({Owner: frozenset({"1조"}) for Owner in Owners}, "1조")
+
 
 # 픽스처일 뿐이며 규칙과 무관하다 - 합성 값이다
 _BLOCK = "합성 층 정의 블록\n- 합성 조항"
 _BLOCK_SHA = "0" * 64
-_OWNERS = {"주인A"}
+_OWNERS = _membership({"주인A"})
 _CONFIG = GenerationConfig(temperature=0.0, seed=1, max_tokens=64, enable_thinking=False)
 _BASE_LOG = {"trial_id": "t1", "seed": 1, "condition": "합성", "mode_tag": "m", "k_tag": 4}
 _DOC = SourceDoc(

@@ -6,6 +6,7 @@ from agent.decompose import DecompositionOutputError, build_drafts_from_assignme
 from agent.placement import MODES, build_note_record, validate_placement
 from agent.prompts import b1_schema, build_b1_messages, require_block_in_messages
 from agent.propose import _chat_fields, _entry, _to_document_record
+from labeling.gold import Membership
 
 # 노트 항목의 토큰 · 시간 필드 - 한 번의 호출 값이라 노트마다 따로 없다 ( b1_call 항목에 있다 )
 _NO_CALL_FIELDS = {
@@ -61,7 +62,8 @@ def run_b1_doc(
   config,
   layer_block,
   layer_block_sha256,
-  Owners,
+  # 사용자 결정 2026-10-22 : 소속 팀 표 - 검색 · 배치 그룹이 이 표에서 나온다
+  Owners: Membership,
   timeout_seconds,
   BaseLog,
 ) -> list[dict]:

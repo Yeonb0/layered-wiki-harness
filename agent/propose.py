@@ -11,6 +11,7 @@ from agent.prompts import (
   place_schema,
   require_block_in_messages,
 )
+from labeling.gold import Membership
 from vault.types import DocumentRecord, DownwardConditionalLink
 
 
@@ -66,7 +67,8 @@ def run_propose_doc(
   place_config,
   layer_block,
   layer_block_sha256,
-  Owners,
+  # 사용자 결정 2026-10-22 : 소속 팀 표 - 검색 · 배치 그룹이 이 표에서 나온다
+  Owners: Membership,
   timeout_seconds,
   BaseLog,
 ) -> list[dict]:

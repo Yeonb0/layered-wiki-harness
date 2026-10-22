@@ -3,11 +3,18 @@ import unittest
 
 from agent.placement import build_note_record, validate_placement
 from agent.types import NoteDraft, PlacementVerdict, SourceDoc
+from labeling.gold import Membership
 from retrieval.search import LAYER_ORDER
 from retrieval.types import Candidate
 
+
+def _membership(Owners):
+  # 기존 형식과 같은 소속 표 - 주인 전원이 1조에 속한다 ( 사용자 결정 2026-10-22 )
+  return Membership({Owner: frozenset({"1조"}) for Owner in Owners}, "1조")
+
+
 # 픽스처일 뿐이며 규칙과 무관하다
-_OWNERS = {"주인A", "주인B"}
+_OWNERS = _membership({"주인A", "주인B"})
 
 
 def _cand(Id: str, Layer: str) -> Candidate:

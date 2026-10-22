@@ -5,12 +5,19 @@ from agent.llm_client import ChatResult, GenerationConfig
 from agent.prompts import assign_schema, b1_schema, decompose_schema, place_schema
 from agent.propose import run_propose_doc
 from agent.types import SourceDoc, SourceSegment
+from labeling.gold import Membership
 from retrieval.search import Retriever
 from retrieval.types import Candidate
 from vault.types import DocumentRecord
 
+
+def _membership(Owners):
+  # 기존 형식과 같은 소속 표 - 주인 전원이 1조에 속한다 ( 사용자 결정 2026-10-22 )
+  return Membership({Owner: frozenset({"1조"}) for Owner in Owners}, "1조")
+
+
 # 픽스처일 뿐이며 규칙과 무관하다 - 합성 값이다
-_OWNERS = {"주인A"}
+_OWNERS = _membership({"주인A"})
 _BLOCK = "합성 층 정의 블록\n- 합성 조항"
 _BLOCK_SHA = "0" * 64
 _CONFIG = GenerationConfig(temperature=0.0, seed=1, max_tokens=64, enable_thinking=False)
