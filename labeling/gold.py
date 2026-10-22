@@ -8,6 +8,7 @@ import collections
 import hashlib
 import json
 import os
+from dataclasses import dataclass
 
 # 기준 §4 : 층 순서는 개인 < 팀 < 전사. 검색 쪽 상수를 가져오지 않고 이 파일에 따로 둔다
 LAYER_RANK = {"개인": 0, "팀": 1, "전사": 2}
@@ -54,6 +55,99 @@ def group_for(seg, gold_layer, owners):
     return TEAM_GROUP
   # 기준 §4 : 정답이 전사면 그룹 없음
   return None
+
+
+@dataclass(frozen=True)
+class Membership:
+  # 사용자 결정 2026-10-22 : 시연 코퍼스는 팀 2개, 개인은 한 팀 또는 두 팀에 속할 수 있다
+  # 사용자 결정 2026-10-22 : 층별 분리 검색과 보기에서 개인은 자기가 속한 모든 팀의 팀 노트를 본다
+  teams_by_owner: dict[str, frozenset[str]]
+  # 기존 형식 ( 전부 1조 ) 이면 TEAM_GROUP, 새 형식이면 None - 새 형식은 팀 맥락을 호출마다 받아야 한다
+  legacy_team: str | None
+
+
+def _check_name(Value, what):
+  # 이름이 문자열이 아니거나 비면 키로 쓸 수 없고 조용히 다른 이름과 섞인다
+  if not isinstance(Value, str) or not Value:
+    raise ValueError(f"{what} 는 비어 있지 않은 문자열이어야 한다: {Value!r}")
+
+
+def read_membership(path):
+  with open(path, encoding="utf-8") as File:
+    Obj = json.load(File)
+  if not isinstance(Obj, dict):
+    raise ValueError("source_layers.json 이 객체가 아니다")
+  HasLegacy = "team_1jo_personal_owners" in Obj
+  HasNew = "personal_owner_teams" in Obj
+  # 두 형식이 함께 있거나 둘 다 없으면 어느 쪽이 맞는지 정할 수 없다
+  if HasLegacy == HasNew:
+    raise ValueError("source_layers.json 에 team_1jo_personal_owners 와 personal_owner_teams 중 정확히 하나가 있어야 한다")
+  if HasLegacy:
+    # 기존 형식은 read_owners 와 같은 검사를 그대로 거친다 - 결과가 지금과 같아야 한다
+    return Membership({Owner: frozenset({TEAM_GROUP}) for Owner in read_owners(path)}, TEAM_GROUP)
+  Raw = Obj["personal_owner_teams"]
+  # 소속 표가 비면 개인 → 팀 정답의 그룹을 정할 수 없다
+  if not isinstance(Raw, dict) or not Raw:
+    raise ValueError("personal_owner_teams 는 비어 있지 않은 객체 ( 주인 : 팀 목록 ) 여야 한다")
+  Teams = {}
+  for Owner, TeamList in Raw.items():
+    _check_name(Owner, "주인 이름")
+    # 팀 목록이 비면 그 주인의 팀 노트 그룹이 없다
+    if not isinstance(TeamList, list) or not TeamList:
+      raise ValueError(f"소속 팀 목록이 비었거나 목록이 아니다: 주인 {Owner!r}")
+    for Team in TeamList:
+      _check_name(Team, "팀 이름")
+    # 같은 팀을 두 번 적으면 오타를 가려낼 수 없다
+    if len(set(TeamList)) != len(TeamList):
+      raise ValueError(f"소속 팀 목록에 중복이 있다: 주인 {Owner!r}")
+    Teams[Owner] = frozenset(TeamList)
+  return Membership(Teams, None)
+
+
+def personal_team(seg, membership):
+  Owner = seg["group"]
+  # 주인이 소속 표에 없으면 어느 팀으로 올릴지 알 수 없다
+  if Owner not in membership.teams_by_owner:
+    raise ValueError(f"개인 페이지 주인이 소속 표에 없다: {seg['segment_id']}")
+  # 사용자 결정 2026-10-22 : 개인 문서가 팀 층에 놓이면 그 문서가 놓인 팀 워크스페이스의 팀이 그룹이다
+  if "team" in seg:
+    # 주인이 속하지 않은 팀의 워크스페이스에는 놓을 수 없다
+    if seg["team"] not in membership.teams_by_owner[Owner]:
+      raise ValueError(f"문서가 놓인 팀이 주인의 소속 팀이 아니다: {seg['segment_id']}")
+    return seg["team"]
+  if membership.legacy_team is not None:
+    return membership.legacy_team
+  # 새 형식에서 팀 맥락 없이 고르면 두 팀 소속 주인의 노트가 임의의 팀에 들어간다
+  raise ValueError(f"새 형식에서는 개인 문서에 team 이 있어야 한다: {seg['segment_id']}")
+
+
+def note_group(seg, gold_layer, membership):
+  # group_for 와 같은 규칙이고 개인 → 팀만 소속 표로 정한다 - group_for 는 기존 호출부 때문에 그대로 둔다
+  if gold_layer == seg["layer"]:
+    return seg["group"]
+  if seg["layer"] == "개인" and gold_layer == "팀":
+    return personal_team(seg, membership)
+  return None
+
+
+def visible_pairs_for(caller_layer, caller_group, membership):
+  # 사용자 결정 2026-10-22 : 층별 분리 검색과 보기에서 개인은 자기가 속한 모든 팀의 팀 노트를 본다
+  if caller_layer not in LAYER_RANK:
+    raise ValueError(f"알 수 없는 caller_layer: {caller_layer!r}")
+  if caller_layer == "개인":
+    # 주인이 표에 없으면 보이는 팀을 정할 수 없다
+    if caller_group not in membership.teams_by_owner:
+      raise ValueError("개인 호출자의 주인이 소속 표에 없다")
+    return {("개인", caller_group)} | {("팀", Team) for Team in membership.teams_by_owner[caller_group]} | {("전사", None)}
+  if caller_layer == "팀":
+    # 팀 그룹이 비면 아무 팀 노트도 맞지 않는 빈 보기가 조용히 만들어진다
+    if not isinstance(caller_group, str) or not caller_group:
+      raise ValueError("팀 호출자는 caller_group 이 필요하다")
+    return {("팀", caller_group), ("전사", None)}
+  # 전사 노트의 그룹은 None 이라 다른 값은 어떤 노트와도 맞지 않는다
+  if caller_group is not None:
+    raise ValueError("전사 호출자는 caller_group 을 받지 않는다")
+  return {("전사", None)}
 
 
 def build(segments_path, split_dir, split_name, labels_path, source_layers_path):
