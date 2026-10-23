@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
-  activate, closeTab, COMPARE_MODE_TAB, COMPARE_VIEWER_TAB, DASHBOARD_TAB, GRAPH_TAB, INITIAL_TABS, noteTabKey, openTab, syncTabs,
+  activate, closeTab, COMPARE_MODE_TAB, COMPARE_VIEWER_TAB, DASHBOARD_TAB, GRAPH_TAB, INITIAL_TABS, LIVE_TAB, noteTabKey, openTab,
+  syncTabs,
 } from './tabs'
 
-const FIXED = [DASHBOARD_TAB, GRAPH_TAB, COMPARE_VIEWER_TAB, COMPARE_MODE_TAB]
+const FIXED = [DASHBOARD_TAB, GRAPH_TAB, COMPARE_VIEWER_TAB, COMPARE_MODE_TAB, LIVE_TAB]
 
 describe('탭 상태', () => {
-  it('처음에는 고정 탭 넷 ( 대시보드, 그래프, 보는 사람 비교, 모드 비교 ) 이고 대시보드가 활성이다', () => {
+  it('처음에는 고정 탭 다섯 ( 대시보드, 그래프, 보는 사람 비교, 모드 비교, 라이브 투입 ) 이고 대시보드가 활성이다', () => {
     expect(INITIAL_TABS).toEqual({ tabs: FIXED, active: DASHBOARD_TAB })
   })
 
@@ -28,7 +29,7 @@ describe('탭 상태', () => {
     const closed = closeTab(state, noteTabKey('노트2'))
     expect(closed.tabs).toEqual([...FIXED, noteTabKey('노트1')])
     expect(closed.active).toBe(noteTabKey('노트1'))
-    expect(closeTab(closed, noteTabKey('노트1')).active).toBe(COMPARE_MODE_TAB)
+    expect(closeTab(closed, noteTabKey('노트1')).active).toBe(LIVE_TAB)
   })
 
   it('closeTab : 활성이 아닌 탭을 닫으면 활성은 그대로다', () => {

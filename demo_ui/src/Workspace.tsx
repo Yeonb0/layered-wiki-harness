@@ -7,11 +7,12 @@ import { CompareMode } from './CompareMode'
 import { CompareViewer } from './CompareViewer'
 import { Dashboard } from './Dashboard'
 import { GraphTab } from './GraphTab'
+import { LiveTab } from './LiveTab'
 import { NoteReader } from './NoteReader'
 import { MODE_LABEL, Sidebar } from './Sidebar'
 import {
   activate, closeTab, COMPARE_MODE_TAB, COMPARE_VIEWER_TAB, DASHBOARD_TAB, GRAPH_TAB, INITIAL_TABS, noteIdOfTab, openTab,
-  syncTabs, type TabState,
+  LIVE_TAB, syncTabs, type TabState,
 } from './tabs'
 import { useView } from './useView'
 
@@ -30,8 +31,11 @@ export function Workspace({
 }) {
   const [mode, setMode] = useState<Mode>('all_layers')
   // 보는 사람을 고르면 두 모드의 보기를 모두 불러 둔다 - 대시보드가 두 모드를 나란히 센다
-  const allLayers = useView('all_layers', viewer.viewer_id)
-  const splitByLayer = useView('split_by_layer', viewer.viewer_id)
+  // 라이브 겹침 : overlay.mode 와 같은 모드의 보기에만 jobId 를 넘긴다 - 다른 모드는 기본 볼트다
+  const [overlay, setOverlay] = useState<{ mode: Mode; jobId: string } | null>(null)
+  const jobFor = (m: Mode) => (overlay && overlay.mode === m ? overlay.jobId : null)
+  const allLayers = useView('all_layers', viewer.viewer_id, jobFor('all_layers'))
+  const splitByLayer = useView('split_by_layer', viewer.viewer_id, jobFor('split_by_layer'))
   const views = { all_layers: allLayers, split_by_layer: splitByLayer }
   const current = views[mode]
   const [tabs, setTabs] = useState<TabState>(INITIAL_TABS)
@@ -64,7 +68,20 @@ export function Workspace({
     if (current.error) return <div className="notice error">오류 : {current.error}</div>
     if (tabs.active === DASHBOARD_TAB) return <Dashboard mode={mode} views={views} />
     if (tabs.active === COMPARE_VIEWER_TAB) {
-      return <CompareViewer viewer={viewer} viewers={viewers} mode={mode} viewA={current.data} onOpenNote={openNote} />
+      return <CompareViewer viewer={viewer} viewers={viewers} mode={mode} viewA={current.data} jobId={jobFor(mode)} onOpenNote={openNote} />
+    }
+    if (tabs.active === LIVE_TAB) {
+      return (
+        <LiveTab
+          defaultMode={mode}
+          onOverlay={(overlayMode, jobId) => {
+            // 겹쳐 보기를 누르면 그 모드로 바꾸고 그래프에서 바로 보이게 한다
+            setOverlay({ mode: overlayMode, jobId })
+            setMode(overlayMode)
+            setTabs((s) => activate(s, GRAPH_TAB))
+          }}
+        />
+      )
     }
     if (tabs.active === COMPARE_MODE_TAB) {
       return <CompareMode views={views} showNames={showNames} onOpenNoteInMode={openNoteInMode} />
@@ -93,6 +110,7 @@ export function Workspace({
     if (key === GRAPH_TAB) return '그래프'
     if (key === COMPARE_VIEWER_TAB) return '보는 사람 비교'
     if (key === COMPARE_MODE_TAB) return '모드 비교'
+    if (key === LIVE_TAB) return '라이브 투입'
     const id = noteIdOfTab(key)
     return (id && titles.get(id)) || id || key
   }
@@ -118,6 +136,9 @@ export function Workspace({
             onClick={() => setTabs((s) => activate(s, COMPARE_MODE_TAB))}
           >
             모드 비교
+          </button>
+          <button className={tabs.active === LIVE_TAB ? 'on' : ''} onClick={() => setTabs((s) => activate(s, LIVE_TAB))}>
+            라이브 투입
           </button>
         </div>
         <button onClick={onChangeViewer}>보는 사람 바꾸기</button>
@@ -171,6 +192,14 @@ export function Workspace({
         <span>기본 실행 : {baseRun ?? '확인 못 함'}</span>
         <span>{showNames ? '이름 · 본문 표시' : '이름 · 본문 가려짐'}</span>
         <span>지금 모드 : {MODE_LABEL[mode]}</span>
+        {overlay && (
+          <span>
+            {`라이브 겹침 : ${overlay.jobId.slice(0, 8)} ( ${MODE_LABEL[overlay.mode]} ) `}
+            <button className="overlay-off" onClick={() => setOverlay(null)}>
+              겹침 끄기
+            </button>
+          </span>
+        )}
       </footer>
     </div>
   )

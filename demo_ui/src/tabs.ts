@@ -3,8 +3,9 @@ export const DASHBOARD_TAB = 'dashboard'
 export const GRAPH_TAB = 'graph'
 export const COMPARE_VIEWER_TAB = 'compare-viewer'
 export const COMPARE_MODE_TAB = 'compare-mode'
-// 고정 탭 순서 : 대시보드, 그래프, 보는 사람 비교, 모드 비교
-const FIXED_TABS = [DASHBOARD_TAB, GRAPH_TAB, COMPARE_VIEWER_TAB, COMPARE_MODE_TAB]
+export const LIVE_TAB = 'live'
+// 고정 탭 순서 : 대시보드, 그래프, 보는 사람 비교, 모드 비교, 라이브 투입
+const FIXED_TABS = [DASHBOARD_TAB, GRAPH_TAB, COMPARE_VIEWER_TAB, COMPARE_MODE_TAB, LIVE_TAB]
 
 export type TabState = { tabs: string[]; active: string }
 

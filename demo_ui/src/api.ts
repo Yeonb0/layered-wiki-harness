@@ -67,16 +67,114 @@ async function getJson<T>(path: string): Promise<T> {
   return (await response.json()) as T
 }
 
+// 본문 오류 ( error_type · message ) 가 있으면 문구에 담는다 - 라이브 투입의 503 · 409 를 화면이 구분해 보이려는 것
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${apiBase()}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const parsed = (await response.json()) as { error_type?: string; message?: string }
+      detail = [parsed.error_type, parsed.message].filter(Boolean).join(' : ')
+    } catch {
+      detail = ''
+    }
+    throw new Error(`요청 실패 ( ${response.status} ) : ${path}${detail ? ` : ${detail}` : ''}`)
+  }
+  return (await response.json()) as T
+}
+
 export function fetchViewers(): Promise<ViewersResponse> {
   return getJson<ViewersResponse>('/viewers')
 }
 
-export function fetchView(mode: Mode, viewerId: string): Promise<ViewResponse> {
-  // viewer_id 에 한글이 들어 있어 쿼리를 문자열로 이어 붙이지 않는다
+export function fetchView(mode: Mode, viewerId: string, jobId?: string | null): Promise<ViewResponse> {
+  // viewer_id 에 한글이 들어 있어 쿼리를 문자열로 이어 붙이지 않는다 - job 이 있으면 그 작업의 새 노트를 겹친 보기를 받는다
   const query = new URLSearchParams({ mode, viewer: viewerId })
+  if (jobId) query.set('job', jobId)
   return getJson<ViewResponse>(`/view?${query.toString()}`)
 }
 
 export function fetchHealth(): Promise<HealthResponse> {
   return getJson<HealthResponse>('/health')
+}
+
+// GET /docs 의 한 항목 - 제목 · 본문 · 그룹 이름은 서버가 내보내지 않는다
+export type DocItem = {
+  doc_id: string
+  layer: string
+  segments: number
+  chars: number
+}
+
+export function fetchDocs(): Promise<DocItem[]> {
+  return getJson<DocItem[]>('/docs')
+}
+
+// GET /live 의 레코드 ( 서버 DemoApp.live_status ) - 라이브가 없으면 { status: 'idle' }
+export type LiveRecord = {
+  live_id: string
+  doc_id: string
+  mode: Mode
+  status: 'running' | 'completed' | 'failed'
+  started_at_utc: string
+  finished_at_utc: string | null
+  elapsed_seconds: number | null
+  workflow_run_id: string | null
+  dify_status: string | null
+  dify_outputs: unknown
+  job_id: string | null
+  error: { error_type: string; message: string } | null
+}
+
+export type LiveState = LiveRecord | { status: 'idle' }
+
+export function fetchLive(): Promise<LiveState> {
+  return getJson<LiveState>('/live')
+}
+
+export function postLive(docId: string, mode: Mode): Promise<{ ok: true; live_id: string }> {
+  return postJson('/live', { doc_id: docId, mode })
+}
+
+// 작업 결과의 노트 한 건 ( 서버 DemoApp._notes_payload ) - 배치에 실패한 노트는 note_id · layer 가 null 이다
+export type JobNote = {
+  note_id: string | null
+  title: string | null
+  layer: string | null
+  group_label: string | null
+  source_segment_ids: string[]
+  upward_links: string[]
+  downward_links: { target_id: string; target_layer: string; target_group_label: string | null }[]
+  candidates: { id: string; layer: string }[]
+  problems: string[]
+}
+
+export type JobResult =
+  | {
+      ok: boolean
+      elapsed_s: number
+      request_dir: string
+      decompose: { ok: boolean; error: string | null; note_count: number }
+      notes: JobNote[]
+      summary_text: string
+    }
+  | { ok: false; error_type: string; message: string }
+
+// GET /jobs/<id> 의 응답 ( 서버 DemoApp.job_status ) - 돌고 있으면 elapsed_s, 끝났으면 http_status · result 가 온다
+export type JobStatus = {
+  job_id: string
+  status: 'running' | 'completed' | 'failed'
+  doc_id: string
+  mode: Mode
+  elapsed_s?: number
+  http_status?: number | null
+  result?: JobResult | null
+}
+
+export function fetchJob(jobId: string): Promise<JobStatus> {
+  return getJson<JobStatus>(`/jobs/${jobId}?wait=0`)
 }

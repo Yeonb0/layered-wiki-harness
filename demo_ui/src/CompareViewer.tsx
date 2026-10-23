@@ -61,16 +61,19 @@ export function CompareViewer({
   viewers,
   mode,
   viewA,
+  jobId,
   onOpenNote,
 }: {
   viewer: Viewer
   viewers: Viewer[]
   mode: keyof typeof MODE_LABEL
   viewA: ViewResponse | null
+  // 라이브 겹침이 이 모드에 걸려 있으면 B 의 보기에도 같은 작업을 겹친다
+  jobId: string | null
   onOpenNote: (noteId: string) => void
 }) {
   const [bId, setBId] = useState<string | null>(null)
-  const b = useView(mode, bId)
+  const b = useView(mode, bId, jobId)
   // 목록은 App 이 받은 보는 사람에서 A ( 지금 보는 사람 ) 를 뺀 것이다
   const candidates = viewers.filter((v) => v.viewer_id !== viewer.viewer_id)
   // 모드를 바꾼 직후에는 B 의 이전 모드 응답이 잠깐 남을 수 있어 같은 모드일 때만 나눈다

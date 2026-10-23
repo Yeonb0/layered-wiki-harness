@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchHealth, fetchView, fetchViewers } from './api'
+import { fetchDocs, fetchHealth, fetchJob, fetchLive, fetchView, fetchViewers, postLive } from './api'
 
 // 픽스처일 뿐이며 규칙과 무관하다 - fetch 를 가짜로 바꿔 URL 만 확인한다
 function fakeFetch(body: unknown = {}) {
@@ -58,6 +58,52 @@ describe('api', () => {
     const calls = fakeFetch(body)
     expect(await fetchHealth()).toEqual(body)
     expect(calls).toEqual(['http://api.test/health'])
+  })
+
+  it('fetchView 는 job 이 있을 때만 job 쿼리를 붙인다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    const calls = fakeFetch()
+    await fetchView('all_layers', '전사')
+    await fetchView('all_layers', '전사', null)
+    await fetchView('split_by_layer', '개인:샘플가', 'a'.repeat(32))
+    expect(new URL(calls[0]).searchParams.has('job')).toBe(false)
+    expect(new URL(calls[1]).searchParams.has('job')).toBe(false)
+    const url = new URL(calls[2])
+    expect(url.searchParams.get('job')).toBe('a'.repeat(32))
+    expect(url.searchParams.get('mode')).toBe('split_by_layer')
+    expect(url.searchParams.get('viewer')).toBe('개인:샘플가')
+  })
+
+  it('fetchDocs · fetchLive · fetchJob 은 각자의 경로를 부른다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    const calls = fakeFetch([])
+    await fetchDocs()
+    await fetchLive()
+    await fetchJob('b'.repeat(32))
+    expect(calls).toEqual(['http://api.test/docs', 'http://api.test/live', `http://api.test/jobs/${'b'.repeat(32)}?wait=0`])
+  })
+
+  it('postLive 는 POST /live 에 doc_id · mode 를 JSON 으로 보낸다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    const seen: { url: string; init: RequestInit }[] = []
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      seen.push({ url, init })
+      return { ok: true, status: 202, json: async () => ({ ok: true, live_id: 'x' }) }
+    })
+    expect(await postLive('문서', 'all_layers')).toEqual({ ok: true, live_id: 'x' })
+    expect(seen[0].url).toBe('http://api.test/live')
+    expect(seen[0].init.method).toBe('POST')
+    expect(JSON.parse(String(seen[0].init.body))).toEqual({ doc_id: '문서', mode: 'all_layers' })
+  })
+
+  it('postLive 의 HTTP 오류는 상태 코드와 error_type 을 문구에 담는다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    vi.stubGlobal('fetch', async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({ ok: false, error_type: 'DifyNotConfigured', message: 'Dify 가 설정되지 않았다' }),
+    }))
+    await expect(postLive('문서', 'all_layers')).rejects.toThrow(/503.*DifyNotConfigured/)
   })
 
   it('HTTP 오류는 오류로 올린다', async () => {

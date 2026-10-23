@@ -4,6 +4,8 @@ import os
 import re
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -50,6 +52,52 @@ _JOB_PATH = re.compile(r"/jobs/([0-9a-f]{32})")
 _WAIT_VALUE = re.compile(r"[0-9]+")
 # 본문 읽기에 실패해 이미 응답을 보냈다는 표지
 _BAD_BODY = object()
+# 사용자 결정 2026-10-23 : 라이브 투입은 화면 → 시연 API → Dify 워크플로 → 시연 API /jobs. Dify 앱 키는 서버만 가진다
+LIVE_USER = "layered-wiki-demo-ui"
+# 워크플로가 문서 한 건을 처리하는 동안 스트리밍 줄 사이가 길게 비므로 읽기 제한을 넉넉히 둔다
+DIFY_READ_TIMEOUT_SECONDS = 600
+# Dify 오류 응답 본문은 이만큼만 읽는다
+_DIFY_ERROR_BODY_BYTES = 4096
+
+
+class DifyError(Exception):
+  pass
+
+
+# 사용자 결정 2026-10-23 : 라이브 투입은 화면 → 시연 API → Dify 워크플로 → 시연 API /jobs. Dify 앱 키는 서버만 가진다
+def make_dify_fn(url: str, key: str, timeout_seconds: float = DIFY_READ_TIMEOUT_SECONDS):
+  endpoint = url.rstrip("/") + "/workflows/run"
+  # 환경 변수 프록시를 쓰지 않는다 - 빈 ProxyHandler 로 직접 연결한다
+  opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+  def dify_fn(inputs: dict, user: str):
+    body = json.dumps({"inputs": inputs, "response_mode": "streaming", "user": user}, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+      endpoint, data=body, method="POST", headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    )
+    try:
+      response = opener.open(request, timeout=timeout_seconds)
+    except urllib.error.HTTPError as error:
+      # 오류에는 상태 코드와 응답 본문의 code · message 만 담는다 - 헤더 · 키는 담지 않는다
+      code = message = None
+      try:
+        parsed = json.loads(error.read(_DIFY_ERROR_BODY_BYTES).decode("utf-8"))
+        if isinstance(parsed, dict):
+          code, message = parsed.get("code"), parsed.get("message")
+      except (ValueError, OSError):
+        pass
+      finally:
+        # 응답 객체를 닫아 파일 핸들이 남지 않게 한다
+        error.close()
+      raise DifyError(f"Dify HTTP {error.code} : code={code} message={message}") from None
+    with response:
+      for raw in response:
+        line = raw.decode("utf-8").strip()
+        # data: 줄만 이벤트다 - 빈 줄 · ping 같은 줄은 넘긴다
+        if line.startswith("data: "):
+          yield json.loads(line[len("data: "):])
+
+  return dify_fn
 # 사용자 결정 2026-10-22 : 합성 코퍼스는 가명 그대로 보인다 - 불러온 실행 manifest 의 args.snapshot 이 이 값이고 args.run_kind 가 아래 값일 때만
 DEMO_SNAPSHOT = 900
 DEMO_RUN_KIND = "demo"
@@ -94,8 +142,10 @@ def group_label(Layer: str, Group, Labels: dict):
 
 
 class DemoApp:
-  def __init__(self, run_dir, chat_fn, embed_backend, commit_fn, work_root, print_fn) -> None:
+  def __init__(self, run_dir, chat_fn, embed_backend, commit_fn, work_root, print_fn, dify_fn=None) -> None:
     self.chat_fn = chat_fn
+    # 라이브 투입에서 Dify 스트리밍 이벤트를 차례로 내는 함수 - 없으면 라이브 투입을 받지 않는다
+    self.dify_fn = dify_fn
     self.print_fn = print_fn
     self.work_root = work_root
     self.base_run = os.path.basename(os.path.normpath(run_dir))
@@ -164,6 +214,8 @@ class DemoApp:
     # 잠금을 잡는 일과 지금 도는 job_id 를 적는 일이 한 덩어리여야 409 응답이 도는 작업을 정확히 가리킨다
     self.meta_lock = threading.Lock()
     self.current_job_id = None
+    # 사용자 결정 2026-10-23 : 라이브 투입은 화면 → 시연 API → Dify 워크플로 → 시연 API /jobs. Dify 앱 키는 서버만 가진다
+    self.live = None
 
   def health(self) -> dict:
     return {
@@ -391,6 +443,14 @@ class DemoApp:
       self.current_job_id = JobId
       # 409 의 running_job_id 를 바로 조회해도 404 가 나지 않도록 레코드를 잠금과 같은 덩어리 안에서 등록한다
       self.jobs[JobId] = Job
+      # 사용자 결정 2026-10-23 : 라이브 투입은 화면 → 시연 API → Dify 워크플로 → 시연 API /jobs. Dify 앱 키는 서버만 가진다
+      # 도는 라이브가 아직 작업을 못 붙였고 문서 · 모드가 같을 때만 그 작업이 라이브의 작업이다
+      Live = self.live["record"] if self.live is not None else None
+      if (
+        Live is not None and Live["status"] == "running" and Live["job_id"] is None
+        and Live["doc_id"] == DocId and Live["mode"] == Mode
+      ):
+        Live["job_id"] = JobId
     try:
       Job["thread"].start()
     except BaseException:
@@ -419,6 +479,86 @@ class DemoApp:
         self.current_job_id = None
         self.lock.release()
       Job["event"].set()
+
+  # 사용자 결정 2026-10-23 : 라이브 투입은 화면 → 시연 API → Dify 워크플로 → 시연 API /jobs. Dify 앱 키는 서버만 가진다
+  def live_start(self, body) -> tuple[int, dict]:
+    if self.dify_fn is None:
+      return 503, {"ok": False, "error_type": "DifyNotConfigured", "message": "Dify 가 설정되지 않았다"}
+    Error, DocId, Mode = self._check_request(body)
+    if Error is not None:
+      return Error
+    Live = {
+      "live_id": uuid.uuid4().hex, "doc_id": DocId, "mode": Mode, "status": "running", "started_at_utc": _utc_now(),
+      "finished_at_utc": None, "elapsed_seconds": None, "workflow_run_id": None, "dify_status": None,
+      "dify_outputs": None, "job_id": None, "error": None,
+    }
+    Internal = {"record": Live, "started_monotonic": time.monotonic()}
+    with self.meta_lock:
+      # 라이브가 돌고 있거나 작업 잠금이 잡혀 있으면 생성 서버 슬롯이 겹친다
+      if (self.live is not None and self.live["record"]["status"] == "running") or self.lock.locked():
+        return 409, {"ok": False, "error_type": "Busy", "message": "다른 요청을 처리 중이다"}
+      self.live = Internal
+    Internal["thread"] = threading.Thread(target=self._live_main, args=(Internal,), daemon=True)
+    try:
+      Internal["thread"].start()
+    except BaseException:
+      # 스레드를 못 띄우면 레코드가 running 으로 남는다
+      with self.meta_lock:
+        self.live = None
+      raise
+    return 202, {"ok": True, "live_id": Live["live_id"]}
+
+  def _live_log(self, Live: dict, Elapsed: float) -> None:
+    # 로그에는 live_id · doc_id · mode · 상태 · 시간만 찍는다 - 키 · 헤더 · 본문은 찍지 않는다
+    self.print_fn(f"live {Live['live_id']} doc={Live['doc_id']} mode={Live['mode']} status={Live['status']} elapsed_s={Elapsed:.1f}")
+
+  def _live_main(self, Internal: dict) -> None:
+    Live = Internal["record"]
+    self._live_log(Live, 0.0)
+    Finished = False
+
+    def fail(Type: str, Message: str) -> None:
+      Live["status"] = "failed"
+      Live["error"] = {"error_type": Type, "message": Message}
+
+    try:
+      for Event in self.dify_fn({"doc_id": Live["doc_id"], "mode": Live["mode"]}, LIVE_USER):
+        Kind = Event.get("event")
+        Data = Event.get("data") if isinstance(Event.get("data"), dict) else {}
+        if Kind == "workflow_started":
+          Live["workflow_run_id"] = Data.get("workflow_run_id") or Event.get("workflow_run_id")
+        elif Kind == "workflow_finished":
+          Live["dify_status"] = Data.get("status")
+          Live["dify_outputs"] = Data.get("outputs")
+          Finished = True
+      if not Finished:
+        fail("NoFinishEvent", "워크플로 종료 이벤트 없이 스트림이 끝났다")
+      elif Live["dify_status"] != "succeeded":
+        fail("DifyWorkflowFailed", f"dify_status={Live['dify_status']}")
+      elif Live["job_id"] is None:
+        fail("NoJobSubmitted", "워크플로가 시연 API 에 작업을 제출하지 않았다")
+      else:
+        Live["status"] = "completed"
+    except Exception as Error:
+      fail(type(Error).__name__, str(Error))
+    finally:
+      # 어떤 경로로 끝나든 running 으로 남지 않는다
+      if Live["status"] == "running":
+        fail("Interrupted", "라이브 처리가 중단됐다")
+      Elapsed = time.monotonic() - Internal["started_monotonic"]
+      Live["elapsed_seconds"] = round(Elapsed, 1)
+      Live["finished_at_utc"] = _utc_now()
+      self._live_log(Live, Elapsed)
+
+  def live_status(self) -> tuple[int, dict]:
+    Internal = self.live
+    if Internal is None:
+      return 200, {"status": "idle"}
+    Live = dict(Internal["record"])
+    if Live["status"] == "running":
+      Live["elapsed_seconds"] = round(time.monotonic() - Internal["started_monotonic"], 1)
+    # 워크플로 출력 · 오류 문구에 실제 주인 이름이 섞이지 않게 기존 가림 함수를 통과시킨다
+    return 200, self._mask(Live)
 
   # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
   def job_status(self, job_id: str, wait_seconds: int) -> tuple[int, dict]:
@@ -557,6 +697,9 @@ def make_handler(App: DemoApp, cors_origin=None):
         self._send(200, App.health())
       elif self.path == "/docs":
         self._send(200, App.doc_list())
+      elif urlsplit(self.path).path == "/live":
+        Status, Obj = App.live_status()
+        self._send(Status, Obj)
       elif urlsplit(self.path).path == "/viewers":
         self._send(200, App.viewers())
       elif urlsplit(self.path).path == "/view":
@@ -609,13 +752,13 @@ def make_handler(App: DemoApp, cors_origin=None):
         return _BAD_BODY
 
     def do_POST(self) -> None:
-      if self.path not in ("/run", "/jobs"):
+      if self.path not in ("/run", "/jobs", "/live"):
         self._send(404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"})
         return
       Body = self._read_json_body()
       if Body is _BAD_BODY:
         return
-      Status, Obj = (App.run if self.path == "/run" else App.submit)(Body)
+      Status, Obj = {"/run": App.run, "/jobs": App.submit, "/live": App.live_start}[self.path](Body)
       self._send(Status, Obj)
 
     def log_message(self, Format, *Args) -> None:
@@ -638,7 +781,26 @@ def parse_args(argv=None) -> argparse.Namespace:
   Parser.add_argument("--port", required=True, type=int)
   # 기본값을 두지 않는다 - 주지 않으면 CORS 헤더를 보내지 않는다
   Parser.add_argument("--cors-origin", default=None)
-  return Parser.parse_args(argv)
+  # 사용자 결정 2026-10-23 : 라이브 투입은 화면 → 시연 API → Dify 워크플로 → 시연 API /jobs. Dify 앱 키는 서버만 가진다
+  # 기본 URL · 기본 변수 이름을 두지 않는다 - 둘 중 하나만 주면 라이브 투입이 반쯤 설정된 채로 뜬다
+  Parser.add_argument("--dify-url", default=None)
+  Parser.add_argument("--dify-key-env", default=None)
+  Args = Parser.parse_args(argv)
+  if (Args.dify_url is None) != (Args.dify_key_env is None):
+    Parser.error("--dify-url 과 --dify-key-env 는 함께 줘야 한다")
+  return Args
+
+
+# 사용자 결정 2026-10-23 : 라이브 투입은 화면 → 시연 API → Dify 워크플로 → 시연 API /jobs. Dify 앱 키는 서버만 가진다
+def dify_fn_from_args(Args, environ=None):
+  if Args.dify_url is None:
+    return None
+  Environ = os.environ if environ is None else environ
+  Key = Environ.get(Args.dify_key_env, "")
+  # 키가 비었거나 없으면 멈춘다 - 메시지에는 변수 이름만 넣고 값은 넣지 않는다
+  if not Key:
+    raise SystemExit(f"환경 변수 {Args.dify_key_env} 가 비었거나 없다")
+  return make_dify_fn(Args.dify_url, Key)
 
 
 def _print_flush(Line: str) -> None:
@@ -649,7 +811,7 @@ def main(argv=None) -> None:
   Args = parse_args(argv)
   App = DemoApp(
     Args.run_dir, chat_fn=chat, embed_backend=None, commit_fn=lambda: git_head_commit(REPO_DIR),
-    work_root=DEFAULT_WORK_ROOT, print_fn=_print_flush,
+    work_root=DEFAULT_WORK_ROOT, print_fn=_print_flush, dify_fn=dify_fn_from_args(Args),
   )
   Server = make_server(App, Args.host, Args.port, cors_origin=Args.cors_origin)
   _print_flush(f"serve host={Args.host} port={Args.port} modes={len(App.cells)} docs={len(App.docs)}")
