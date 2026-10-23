@@ -1593,7 +1593,7 @@ body.resizing {
 }
 
 .badge.minutes-source {
-  margin-left: 8px;
+  margin-left: 6px;
   background: #3a3a3a;
   color: var(--text);
   font-size: 11px;

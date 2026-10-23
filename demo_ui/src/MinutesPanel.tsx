@@ -1,6 +1,6 @@
 // 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 회의록 투입 ( 차수 901 ) → 에이전트 분해 · 배치 → 참석자가 노트별 승인 / 반려 → 승인된 노트만 볼트에 겹친다. 승인 게이트는 승격이 아니다
 // 규칙 검사는 서버가 하고 화면은 서버 message 를 그대로 보인다 - 글자 수 상한도 서버가 판정한다
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   decideProposal, fetchProposal, fetchProposals, submitMinutes, type Meeting, type Mode, type Proposal, type ProposalNote, type Viewer,
 } from './api'
@@ -68,6 +68,7 @@ export function MinutesPanel({
   defaultMode,
   onReloadMeeting,
   onViewInVault,
+  onChanged,
 }: {
   viewer: Viewer
   meeting: Meeting
@@ -75,6 +76,8 @@ export function MinutesPanel({
   onReloadMeeting: () => void
   // 그 모드로 바꾸고 보기를 다시 불러온다
   onViewInVault: (mode: Mode) => void
+  // doc 상태가 바뀌면 ( 투입 · 처리 끝 · 승인 / 반려 · decided ) 올린다 - 회의록 승인이 끝나면 탭을 다시 열지 않아도 할 일 제안 버튼이 나오게
+  onChanged: () => void
 }) {
   const [detail, setDetail] = useState<Proposal | null>(null)
   const [status, setStatus] = useState<string | null>(null)
@@ -85,6 +88,8 @@ export function MinutesPanel({
   const [submitting, setSubmitting] = useState(false)
   const [tick, setTick] = useState(0)
   const [cardErrors, setCardErrors] = useState<Record<number, string>>({})
+  // 처음 불러온 값은 변화가 아니다
+  const lastStatus = useRef<string | null | undefined>(undefined)
   const linkedId = meeting.minutes_doc_id
   const personal = meeting.workspace.layer === '개인'
 
@@ -101,6 +106,8 @@ export function MinutesPanel({
         const loaded = target && target.status !== 'running' ? await fetchProposal(viewer.viewer_id, target.doc_id) : null
         if (!alive) return
         setStatus(target?.status ?? null)
+        if (lastStatus.current !== undefined && lastStatus.current !== (target?.status ?? null)) onChanged()
+        lastStatus.current = target?.status ?? null
         setDetail(loaded)
         setError(null)
         if (linked?.status === 'running') timer = setTimeout(() => setTick((t) => t + 1), 3000)
@@ -122,6 +129,7 @@ export function MinutesPanel({
       await submitMinutes(viewer.viewer_id, meeting.meeting_id, mode, text)
       setText('')
       onReloadMeeting()
+      onChanged()
     } catch (e) {
       setSubmitError((e as Error).message)
     } finally {
@@ -135,6 +143,7 @@ export function MinutesPanel({
     try {
       await decideProposal(viewer.viewer_id, detail.doc_id, [{ note_index: noteIndex, decision }])
       setTick((t) => t + 1)
+      onChanged()
     } catch (e) {
       setCardErrors((prev) => ({ ...prev, [noteIndex]: (e as Error).message }))
     }

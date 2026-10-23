@@ -1,6 +1,6 @@
 // 사용자 결정 2026-10-23 ( 지침 v3.1 · 3절 27 ) : 할 일 배정은 회의록 승인 뒤 버튼으로 도는 별도 역할. 결과는 에이전트 제안으로 표시하고 사람이 확정 / 버린다. 확정 뒤 팀원이 진행 기록을 덧붙인다
 // 서버가 준 할 일 · 사유를 화면 모양으로 나누는 순수 함수 - 숨기거나 고치지 않는다
-import type { Task } from './api'
+import type { MeetingDoc, Task } from './api'
 
 // 참석자 순서를 유지한다 - 참석자 밖 담당자는 만난 순서로 뒤에 붙고 할 일이 없는 참석자는 빠진다
 export function groupByAssignee(tasks: Task[], attendees: string[]): { assignee: string; tasks: Task[] }[] {
@@ -35,4 +35,10 @@ export function problemLabel(problem: string): string {
 
 export function pendingProposals(tasks: Task[]): Task[] {
   return tasks.filter((task) => task.source === 'agent_proposal')
+}
+
+// 제안 중인 문서가 있으면 버튼을 그리지 않고 ( 서버도 막는다 ), 확정된 문서만 있으면 다시 받기, 없으면 처음 받기다
+export function assignButtonState(docs: Pick<MeetingDoc, 'status'>[]): 'first' | 'again' | 'hidden' {
+  if (docs.some((doc) => doc.status === 'proposal')) return 'hidden'
+  return docs.some((doc) => doc.status === 'confirmed') ? 'again' : 'first'
 }

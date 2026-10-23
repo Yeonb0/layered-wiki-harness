@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Task } from './api'
-import { droppedReasonLabel, groupByAssignee, pendingProposals, problemLabel } from './assignView'
+import { assignButtonState, droppedReasonLabel, groupByAssignee, pendingProposals, problemLabel } from './assignView'
 
 // 픽스처일 뿐이며 규칙과 무관하다 - 합성 값이다
 function task(id: string, assignee: string, source: Task['source'] = 'agent_proposal'): Task {
@@ -48,5 +48,20 @@ describe('pendingProposals', () => {
   it('에이전트 제안 상태의 할 일만 남긴다', () => {
     const tasks = [task('t1', '팀원A'), task('t2', '팀원A', 'agent_confirmed'), task('t3', '팀원A', 'human')]
     expect(pendingProposals(tasks).map((t) => t.task_id)).toEqual(['t1'])
+  })
+})
+
+describe('assignButtonState', () => {
+  it('문서가 없으면 처음 받기다', () => {
+    expect(assignButtonState([])).toBe('first')
+  })
+
+  it('확정된 문서만 있으면 다시 받기다', () => {
+    expect(assignButtonState([{ status: 'confirmed' }, { status: 'confirmed' }])).toBe('again')
+  })
+
+  it('제안 중인 문서가 있으면 버튼을 그리지 않는다', () => {
+    expect(assignButtonState([{ status: 'proposal' }])).toBe('hidden')
+    expect(assignButtonState([{ status: 'confirmed' }, { status: 'proposal' }])).toBe('hidden')
   })
 })

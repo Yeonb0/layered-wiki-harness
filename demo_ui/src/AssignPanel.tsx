@@ -5,7 +5,7 @@ import {
   addProgress, ApiError, confirmMeetingDoc, confirmTask, discardTask, fetchAssignStatus, fetchMeetingDocs, fetchProposals, fetchTasks,
   requestAssign, type AssignStatus, type Meeting, type MeetingDoc, type Task, type Viewer,
 } from './api'
-import { droppedReasonLabel, groupByAssignee, problemLabel } from './assignView'
+import { assignButtonState, droppedReasonLabel, groupByAssignee, problemLabel } from './assignView'
 import { formatAt } from './meetingsView'
 import { personalName } from './MeetingPage'
 import { Toggle } from './Toggle'
@@ -160,10 +160,13 @@ function DocCard({
 export function AssignPanel({
   viewer,
   meeting,
+  minutesVersion,
   onTasksChanged,
 }: {
   viewer: Viewer
   meeting: Meeting
+  // 회의록 doc 상태가 바뀌면 올라간다 - 바뀌면 상태 · 문서 · 배정 상태를 다시 불러온다
+  minutesVersion: number
   // 할 일이 바뀌면 회의 상세의 할 일 토글을 다시 불러오게 알린다
   onTasksChanged: () => void
 }) {
@@ -177,6 +180,7 @@ export function AssignPanel({
   const myName = personalName(viewer)
   const attendee = myName !== null && meeting.attendees.includes(myName)
   const personal = meeting.workspace.layer === '개인'
+  const buttonState = assignButtonState(docs)
 
   useEffect(() => {
     if (personal) return
@@ -211,7 +215,7 @@ export function AssignPanel({
       if (timer !== undefined) clearTimeout(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewer.viewer_id, meeting.meeting_id, meeting.minutes_doc_id, tick, personal])
+  }, [viewer.viewer_id, meeting.meeting_id, meeting.minutes_doc_id, tick, personal, minutesVersion])
 
   const request = async () => {
     setRequestError(null)
@@ -238,9 +242,14 @@ export function AssignPanel({
           {decided === true && (
             <>
               {attendee ? (
-                <button disabled={assign?.status === 'running'} onClick={() => void request()}>
-                  할 일 제안 받기
-                </button>
+                buttonState !== 'hidden' && (
+                  <>
+                    <button disabled={assign?.status === 'running'} onClick={() => void request()}>
+                      {buttonState === 'again' ? '할 일 제안 다시 받기' : '할 일 제안 받기'}
+                    </button>
+                    {buttonState === 'again' && <p className="muted">새 회의 문서가 하나 더 만들어진다</p>}
+                  </>
+                )
               ) : (
                 <p className="muted">회의 참석자 ( 개인 보는 사람 ) 만 할 일 제안을 요청한다</p>
               )}

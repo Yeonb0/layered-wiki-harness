@@ -172,6 +172,9 @@ export function MeetingPage({
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [version, setVersion] = useState(0)
+  // 회의록 doc 상태가 바뀌면 올라간다 - 회의록 승인이 끝나면 탭을 다시 열지 않아도 할 일 제안 버튼이 나오게
+  const [minutesVersion, setMinutesVersion] = useState(0)
+  const bumpMinutes = useCallback(() => setMinutesVersion((v) => v + 1), [])
   const reload = useCallback(() => setVersion((v) => v + 1), [])
 
   useEffect(() => {
@@ -246,8 +249,8 @@ export function MeetingPage({
           </ul>
         )}
       </Toggle>
-      <MinutesPanel viewer={viewer} meeting={meeting} defaultMode={mode} onReloadMeeting={reload} onViewInVault={onViewInVault} />
-      <AssignPanel viewer={viewer} meeting={meeting} onTasksChanged={reload} />
+      <MinutesPanel viewer={viewer} meeting={meeting} defaultMode={mode} onReloadMeeting={reload} onViewInVault={onViewInVault} onChanged={bumpMinutes} />
+      <AssignPanel viewer={viewer} meeting={meeting} minutesVersion={minutesVersion} onTasksChanged={reload} />
       <Toggle title="회의록에서 나온 노트">
         {!meeting.minutes_doc_id ? (
           <p className="muted">연결된 회의록 없음</p>
