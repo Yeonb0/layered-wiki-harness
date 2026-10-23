@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ViewNote } from './api'
-import { buildEdges } from './edges'
+import { buildEdges, edgeStyle, filterEdges } from './edges'
 
 // 픽스처일 뿐이며 규칙과 무관하다 - 이름은 전부 합성이다
 function note(id: string, layer: string, up: string[] = [], down: string[] = []): ViewNote {
@@ -36,5 +36,50 @@ describe('buildEdges', () => {
   it('엣지 id 는 종류와 양 끝으로 정해져 겹치지 않는다', () => {
     const edges = buildEdges([note('가', '팀', ['나'], ['나']), note('나', '팀')])
     expect(new Set(edges.map((e) => e.id)).size).toBe(2)
+  })
+})
+
+describe('edgeStyle', () => {
+  const cross = { id: 'c', source: '가', target: '나', kind: 'upward' as const, sameLayer: false }
+  const same = { id: 's', source: '다', target: '라', kind: 'upward' as const, sameLayer: true }
+
+  it('선택이 없으면 층 간 엣지는 보통, 같은 층 엣지는 흐리다', () => {
+    expect(edgeStyle(cross, null)).toEqual({ opacity: 1, strokeWidth: 2, zIndex: 0 })
+    expect(edgeStyle(same, null).opacity).toBe(0.3)
+    expect(edgeStyle(same, null).opacity).toBeLessThan(edgeStyle(cross, null).opacity)
+  })
+
+  it('선택한 노드에 닿는 엣지는 진하고 굵게, 위에 올린다', () => {
+    for (const selected of ['가', '나']) {
+      const look = edgeStyle(cross, selected)
+      expect(look.opacity).toBe(1)
+      expect(look.strokeWidth).toBeGreaterThan(edgeStyle(cross, null).strokeWidth)
+      expect(look.zIndex).toBeGreaterThan(0)
+    }
+    // 같은 층 엣지도 선택한 노드에 닿으면 진하다
+    expect(edgeStyle(same, '다').opacity).toBe(1)
+  })
+
+  it('선택한 노드에 닿지 않는 엣지는 아주 흐리다', () => {
+    expect(edgeStyle(cross, '다').opacity).toBe(0.08)
+    expect(edgeStyle(same, '가').opacity).toBe(0.08)
+    expect(edgeStyle(cross, '다').opacity).toBeLessThan(edgeStyle(same, null).opacity)
+  })
+})
+
+describe('filterEdges', () => {
+  const edges = [
+    { id: 'c', source: '가', target: '나', kind: 'upward' as const, sameLayer: false },
+    { id: 's', source: '다', target: '라', kind: 'upward' as const, sameLayer: true },
+    { id: 'd', source: '나', target: '가', kind: 'downward' as const, sameLayer: false },
+  ]
+
+  it('끄면 같은 층 엣지가 빠지고 층 간 엣지는 남는다', () => {
+    expect(filterEdges(edges, false).map((e) => e.id)).toEqual(['c', 'd'])
+  })
+
+  it('켜면 모두 남고 원본은 바뀌지 않는다', () => {
+    expect(filterEdges(edges, true)).toEqual(edges)
+    expect(edges).toHaveLength(3)
   })
 })

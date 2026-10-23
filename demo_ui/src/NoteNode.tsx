@@ -6,7 +6,7 @@ import { NODE_H, NODE_W } from './layout'
 
 export type NoteFlowNode = Node<{ note: ViewNote; selected: boolean }, 'note'>
 export type CellFlowNode = Node<{ label: string; color: string }, 'cell'>
-export type BandFlowNode = Node<{ label: string; color: string }, 'band'>
+export type BandFlowNode = Node<{ label: string; color: string; emptyText: string | null }, 'band'>
 
 // 같은 위치에 겹친 핸들은 가로 위치를 달리해 상향 / 하향 엣지가 서로 다른 점에서 출발한다
 const POSITION_S = { left: '35%' }
@@ -41,7 +41,7 @@ export function NoteNode({ data }: NodeProps<NoteFlowNode>) {
 export function CellNode({ data }: NodeProps<CellFlowNode>) {
   return (
     <div className="cell-box" style={{ borderColor: data.color }}>
-      <span style={{ color: data.color }}>{data.label}</span>
+      {data.label && <span style={{ color: data.color }}>{data.label}</span>}
     </div>
   )
 }
@@ -49,7 +49,8 @@ export function CellNode({ data }: NodeProps<CellFlowNode>) {
 export function BandNode({ data }: NodeProps<BandFlowNode>) {
   return (
     <div className="band-box" style={{ borderColor: data.color }}>
-      <span style={{ color: data.color }}>{data.label}</span>
+      <span className="band-name" style={{ color: data.color }}>{data.label}</span>
+      {data.emptyText && <div className="band-empty">{data.emptyText}</div>}
     </div>
   )
 }

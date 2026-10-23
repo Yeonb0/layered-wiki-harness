@@ -211,9 +211,23 @@ button.on {
   background: rgba(255, 255, 255, 0.02);
 }
 
-.band-box span {
+.band-name {
   font-size: 15px;
   font-weight: 700;
+}
+
+.band-empty {
+  padding: 14px 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .detail {
@@ -245,10 +259,18 @@ button.on {
 }
 
 .body {
-  white-space: pre-wrap;
-  font-family: inherit;
   font-size: 13px;
-  margin: 0;
+}
+
+.body .line {
+  white-space: pre-wrap;
+}
+
+.body .sub {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #c9c9ff;
 }
 
 button.link {

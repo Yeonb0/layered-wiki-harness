@@ -10,6 +10,8 @@ export const NODE_H = 76
 const GAP = 20
 const PAD = 16
 const LABEL_H = 28
+// 띠 이름은 띠 왼쪽 위 한 줄에 두고 칸은 그 아래에서 시작한다 - 띠 이름과 칸 이름이 겹치지 않게
+const BAND_LABEL_H = 28
 const BAND_GAP = 40
 const MIN_BAND_H = 96
 // 칸 안에서 한 줄에 놓는 노드 수
@@ -17,7 +19,8 @@ const PER_ROW = 2
 
 export type LaidOutNode = { note: ViewNote; band: Band; cell: string; x: number; y: number }
 export type CellBox = { band: Band; label: string; x: number; y: number; width: number; height: number }
-export type BandBox = { band: Band; y: number; height: number }
+// empty : 이 보기에서 보이는 노트가 없는 띠 - 화면이 안내 문구를 보인다
+export type BandBox = { band: Band; y: number; height: number; empty: boolean }
 export type Layout = { nodes: LaidOutNode[]; cells: CellBox[]; bands: BandBox[]; width: number; height: number }
 
 function isBand(layer: string): layer is Band {
@@ -49,7 +52,8 @@ export function layoutNotes(notes: ViewNote[]): Layout {
     }
     const labels = [...groups.keys()].sort((a, b) => a.localeCompare(b, 'ko'))
     const rows = Math.max(0, ...labels.map((label) => Math.ceil(groups.get(label)!.length / PER_ROW)))
-    const height = rows === 0 ? MIN_BAND_H : LABEL_H + PAD * 2 + rows * (NODE_H + GAP) - GAP
+    const height = rows === 0 ? MIN_BAND_H : BAND_LABEL_H + LABEL_H + PAD * 2 + rows * (NODE_H + GAP) - GAP
+    const cellsY = y + BAND_LABEL_H
     let x = 0
     for (const label of labels) {
       // 칸 안에서는 볼트에 들어온 순서 ( inserted_at_vault_size ) 로 놓는다
@@ -64,13 +68,13 @@ export function layoutNotes(notes: ViewNote[]): Layout {
           band,
           cell: label,
           x: x + PAD + (index % PER_ROW) * (NODE_W + GAP),
-          y: y + LABEL_H + PAD + Math.floor(index / PER_ROW) * (NODE_H + GAP),
+          y: cellsY + LABEL_H + PAD + Math.floor(index / PER_ROW) * (NODE_H + GAP),
         })
       })
-      cells.push({ band, label, x, y, width: cellWidth, height })
+      cells.push({ band, label, x, y: cellsY, width: cellWidth, height: height - BAND_LABEL_H })
       x += cellWidth + GAP
     }
-    bands.push({ band, y, height })
+    bands.push({ band, y, height, empty: labels.length === 0 })
     width = Math.max(width, x)
     y += height + BAND_GAP
   }

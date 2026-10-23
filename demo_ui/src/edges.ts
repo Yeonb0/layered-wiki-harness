@@ -36,3 +36,27 @@ export function buildEdges(notes: ViewNote[], warn: (message: string) => void = 
   }
   return edges
 }
+
+// 같은 층 링크는 흐리게 - 층 간 링크가 먼저 읽히게 한다 ( 데이터는 그대로 )
+const SAME_LAYER_OPACITY = 0.3
+// 노드를 선택하면 닿지 않는 엣지는 아주 흐리게
+const DIMMED_OPACITY = 0.08
+
+export type EdgeLook = { opacity: number; strokeWidth: number; zIndex: number }
+
+// 엣지 모양을 정하는 순수 함수 - 선택한 노드가 없으면 층 간 엣지는 보통, 같은 층 엣지는 흐리게
+export function edgeStyle(edge: LinkEdge, selectedId: string | null): EdgeLook {
+  if (selectedId === null) {
+    return { opacity: edge.sameLayer ? SAME_LAYER_OPACITY : 1, strokeWidth: 2, zIndex: 0 }
+  }
+  // 선택한 노드에 닿는 엣지만 진하고 굵게 그리고 위에 올린다
+  if (edge.source === selectedId || edge.target === selectedId) {
+    return { opacity: 1, strokeWidth: 3.5, zIndex: 10 }
+  }
+  return { opacity: DIMMED_OPACITY, strokeWidth: 2, zIndex: 0 }
+}
+
+// 화면 표시 선택일 뿐 데이터는 그대로다 - 끄면 같은 층 엣지를 그리지 않을 뿐 응답의 링크는 바뀌지 않는다
+export function filterEdges(edges: LinkEdge[], showSameLayer: boolean): LinkEdge[] {
+  return showSameLayer ? edges : edges.filter((edge) => !edge.sameLayer)
+}

@@ -1,5 +1,6 @@
 // 사용자 결정 2026-10-21 · 23 : 시연 경로 전용 화면 - 오른쪽 패널은 응답에 있는 필드만 보인다
 import type { ViewNote } from './api'
+import { bodyLines } from './body'
 import { LAYER_COLOR } from './colors'
 
 export function NoteDetail({
@@ -48,7 +49,19 @@ export function NoteDetail({
         ))}
       </ul>
       <h3>본문</h3>
-      <pre className="body">{note.body}</pre>
+      <div className="body">
+        {bodyLines(note.body).map((line, index) =>
+          line.kind === 'heading' ? (
+            <div key={index} className="sub">
+              {line.text}
+            </div>
+          ) : (
+            <div key={index} className="line">
+              {line.text || '\u00a0'}
+            </div>
+          ),
+        )}
+      </div>
       <h3>상향 링크</h3>
       {links(note.upward_links)}
       <h3>열린 하향 조건부 링크</h3>

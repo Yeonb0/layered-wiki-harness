@@ -65,3 +65,19 @@ describe('layoutNotes', () => {
     expect(layout.nodes).toEqual([])
   })
 })
+
+describe('layoutNotes 띠 · 칸 이름 자리', () => {
+  it('칸은 띠 이름 줄 아래에서 시작한다', () => {
+    const { bands, cells } = layoutNotes(NOTES)
+    for (const cell of cells) {
+      const band = bands.find((b) => b.band === cell.band)!
+      expect(cell.y).toBeGreaterThan(band.y)
+      expect(cell.y + cell.height).toBeLessThanOrEqual(band.y + band.height)
+    }
+  })
+
+  it('노트가 없는 띠만 empty 로 표시한다', () => {
+    const layout = layoutNotes([note('팀가1', '팀', '팀가', 0)])
+    expect(layout.bands.map((b) => [b.band, b.empty])).toEqual([['전사', true], ['팀', false], ['개인', true]])
+  })
+})
