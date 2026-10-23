@@ -8,6 +8,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from dataclasses import asdict, replace
 
 import serve.demo_api as D
 from agent.layer_block import MARK
@@ -332,14 +333,45 @@ class JobOverlayTest(ViewBase):
     self.assertIn("기존 제목 팀가", [Note["title"] for Note in Base["notes"]])
     # 다른 문서의 기존 노트는 그대로다
     self.assertIn("기존 제목 전사", Titles)
-    # 지워진 기존 노트를 가리키던 링크는 빼고 수를 센다
+    # 지워진 기존 노트를 가리키던 링크는 빼고 수를 센다 - 옛 문서팀가#n1 을 가리키던 상향 1건과, 새 노트가 같은 id 를 받은 옛 문서팀가#n0 을 가리키던 문서전사#n0 의 하향 조건부 1건 ( 지침 3절 20 : 옛 노트로 가던 링크는 새 노트로 넘어가지 않는다 )
     Personal = next(Note for Note in Over["notes"] if Note["note_id"] == "문서개인A#n0")
     self.assertEqual(Personal["upward_links"], [])
-    self.assertEqual(Over["counts"]["overlay_dangling_links_dropped"], 1)
+    self.assertEqual(Over["counts"]["overlay_dangling_links_dropped"], 2)
+    Overlaid, _ = App._overlay([asdict(Note) for Note in App.cells["all_layers"]["notes"]], App.jobs[Id])
+    Company = next(Note for Note in Overlaid if Note["note_id"] == "문서전사#n0")
+    self.assertNotIn("문서팀가#n0", [Link["target_id"] for Link in Company["downward_conditional_links"]])
     self.assertNotIn("overlay_dangling_links_dropped", Base["counts"])
     # 기본 상태는 그대로다
     self.assertEqual(self.ids(App.view("all_layers", "전사", None)[1]), {"문서전사#n0"})
     self.assertEqual(len(App.cells["all_layers"]["notes"]), 7)
+
+  def test_links_to_a_reused_note_id_are_dropped(self) -> None:
+    # 픽스처일 뿐이며 규칙과 무관하다 - 작업이 옛 노트와 같은 id ( 문서팀가#n0 ) 의 새 노트를 만든다
+    # 다른 문서의 기존 노트 하나가 그 id 를 상향 링크로 가리키게 이 테스트 안에서만 복사본을 쓴다
+    Linked = self.app()
+    Cell = Linked.cells["all_layers"]
+    Cell["notes"] = [
+      replace(Note, upward_links=[*Note.upward_links, "문서팀가#n0"]) if Note.note_id == "문서개인E#n0" else Note
+      for Note in Cell["notes"]
+    ]
+    Control = self.app()
+    Viewer = "개인:샘플다"
+    Base = Linked.view("all_layers", Viewer, None)[1]
+    BaseNote = next(Note for Note in Base["notes"] if Note["note_id"] == "문서개인E#n0")
+    self.assertIn("문서팀가#n0", BaseNote["upward_links"])
+    LinkedOver = Linked.view("all_layers", Viewer, self.finish(Linked))[1]
+    ControlOver = Control.view("all_layers", Viewer, self.finish(Control))[1]
+    # 새 노트가 같은 id 를 받았어도 옛 노트를 가리키던 링크는 새 노트로 넘어가지 않는다
+    Other = next(Note for Note in LinkedOver["notes"] if Note["note_id"] == "문서개인E#n0")
+    self.assertNotIn("문서팀가#n0", Other["upward_links"])
+    Company = next(Note for Note in LinkedOver["notes"] if Note["note_id"] == "문서전사#n0")
+    self.assertNotIn("문서팀가#n0", Company["opened_downward_links"])
+    # 뺀 수는 그 링크 하나만큼 늘어난다 : 전사 노트의 조건부 링크 1 + 개인A 의 상향 링크 1 ( 둘 다 옛 노트를 가리켰다 ) 에 더해 위 링크 1
+    self.assertEqual(ControlOver["counts"]["overlay_dangling_links_dropped"], 2)
+    self.assertEqual(LinkedOver["counts"]["overlay_dangling_links_dropped"], 3)
+    # 새 노트 자신은 그대로 보인다
+    New = next(Note for Note in LinkedOver["notes"] if Note["note_id"] == "문서팀가#n0")
+    self.assertEqual(New["title"], "합성 제목")
 
   def test_job_status_rules(self) -> None:
     Gate_ = Gate()

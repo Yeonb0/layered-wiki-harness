@@ -315,14 +315,16 @@ class DemoApp:
     with open(Path, encoding="utf-8") as File:
       New = [json.loads(Line) for Line in File if Line.strip()]
     Kept = [Note for Note in Notes if Note["source_doc_id"] != Job["doc_id"]]
+    Removed = {Note["note_id"] for Note in Notes if Note["source_doc_id"] == Job["doc_id"]}
     Ids = {Note["note_id"] for Note in Kept + New}
     Dropped = 0
     Out = []
     for Note in Kept:
       Note = dict(Note)
-      # 지워진 기존 노트를 가리키던 링크는 대상이 없어 깨진 데이터가 되므로 빼고 수만 센다
-      Up = [Target for Target in Note["upward_links"] if Target in Ids]
-      Down = [Link for Link in Note["downward_conditional_links"] if Link["target_id"] in Ids]
+      # 지침 3절 20 : 링크는 에이전트가 만든 것만 그린다 - 새 노트가 옛 노트와 같은 id ( 문서id#n순번 ) 를 받아도 옛 노트를 가리키던 링크는 새 노트로 넘어가지 않는다
+      # 지워진 기존 노트를 가리키던 링크는 빼고 수만 센다 - 대상이 지워진 노트이거나 어디에도 없는 경우다
+      Up = [Target for Target in Note["upward_links"] if Target in Ids and Target not in Removed]
+      Down = [Link for Link in Note["downward_conditional_links"] if Link["target_id"] in Ids and Link["target_id"] not in Removed]
       Dropped += len(Note["upward_links"]) - len(Up) + len(Note["downward_conditional_links"]) - len(Down)
       Note["upward_links"], Note["downward_conditional_links"] = Up, Down
       Out.append(Note)
