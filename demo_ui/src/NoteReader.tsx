@@ -1,4 +1,6 @@
+// 사용자 결정 2026-10-23 : 문서 보기는 옵시디언 느낌 ( 좁은 읽기 폭, 접히는 속성 블록, [[ 내부 링크 ]] )
 // 사용자 결정 2026-10-23 : 노트 탭은 읽기 화면 - 이 노트가 가리키는 링크만 칩으로 보이고 들어오는 링크는 보이지 않는다
+import { useState } from 'react'
 import type { ViewNote } from './api'
 import { bodyLines } from './body'
 import { LAYER_COLOR } from './colors'
@@ -15,6 +17,8 @@ export function NoteReader({
   showNames: boolean
   onOpenNote: (noteId: string) => void
 }) {
+  // 속성 블록은 옵시디언처럼 머리를 누르면 접히고 기본은 펼침이다
+  const [propsOpen, setPropsOpen] = useState(true)
   // 본문이 가려진 실행에서는 표지를 찾지 않는다 - 가린 문구에서 표지가 나올 수 없다
   const markerHits = showNames ? findMarkers(note) : []
   const marked = (text: string) =>
@@ -35,7 +39,7 @@ export function NoteReader({
     ) : (
       <span className="chips">
         {ids.map((id) => (
-          <button key={id} className="chip" onClick={() => onOpenNote(id)}>
+          <button key={id} className="wikilink" onClick={() => onOpenNote(id)}>
             {`[[ ${titles.get(id) ?? id} ]]`}
           </button>
         ))}
@@ -44,7 +48,12 @@ export function NoteReader({
   return (
     <article className="reader">
       <h1>{note.title}</h1>
-      <dl className="props">
+      <div className="obs-props">
+        <button className="obs-props-head" aria-expanded={propsOpen} onClick={() => setPropsOpen((open) => !open)}>
+          <span className="caret">{propsOpen ? '▾' : '▸'}</span>속성
+        </button>
+        {propsOpen && (
+      <dl className="obs-dl">
         <dt>층</dt>
         <dd>
           <span className="badge" style={{ background: LAYER_COLOR[note.layer] }}>{note.layer}</span>
@@ -73,6 +82,8 @@ export function NoteReader({
           ))}
         </dd>
       </dl>
+        )}
+      </div>
       <div className="body">
         {bodyLines(note.body).map((line, index) =>
           line.kind === 'heading' ? (

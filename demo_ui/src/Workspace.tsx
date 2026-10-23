@@ -66,7 +66,7 @@ export function Workspace({
 
   const center = () => {
     if (current.error) return <div className="notice error">오류 : {current.error}</div>
-    if (tabs.active === DASHBOARD_TAB) return <Dashboard mode={mode} views={views} />
+    if (tabs.active === DASHBOARD_TAB) return <Dashboard mode={mode} views={views} viewer={viewer} showNames={showNames} onOpenNote={openNote} />
     if (tabs.active === COMPARE_VIEWER_TAB) {
       return <CompareViewer viewer={viewer} viewers={viewers} mode={mode} viewA={current.data} jobId={jobFor(mode)} onOpenNote={openNote} />
     }

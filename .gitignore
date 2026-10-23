@@ -5,3 +5,9 @@ data/
 
 # 코퍼스 원문은 ~/layered-wiki-corpus ( 로컬 전용, 원격 없음 ) 에만 둔다, 공개 저장소 유입 방지
 *_ExportBlock-*.zip
+
+# 저장소 루트에 내려받아 둔 글꼴 원본은 올리지 않는다 ( 화면이 쓰는 글꼴은 demo_ui/public/fonts 에 따로 있다 )
+/*.OTF
+
+# 사용자 결정 2026-10-23 : 글꼴 파일은 공개 저장소에 올리지 않는다 ( SIL OFL 재배포 조건 ) - 데모 PC 에만 둔다
+demo_ui/public/fonts/

@@ -35,3 +35,8 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+## 글꼴
+
+나눔스퀘어네오 OTF 3개 ( NANUMSQUARENEOOTF-RG / BD / EB ) 를 네이버 한글한글 아름답게에서 내려받아 `demo_ui/public/fonts/nanumsquareneo/` 에 둔다.
+저장소에는 올리지 않는다 ( `.gitignore` ). 없으면 system-ui 로 대체된다.

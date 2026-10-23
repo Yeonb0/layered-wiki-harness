@@ -1,3 +1,25 @@
+/* 사용자 결정 2026-10-23 : 화면 글꼴은 나눔스퀘어네오. 글꼴 파일은 저장소에 없다 ( OFL 재배포 조건 ) - demo_ui/public/fonts/nanumsquareneo/ 에 RG · BD · EB OTF 를 직접 두고, 없으면 system-ui 로 보인다 */
+@font-face {
+  font-family: 'NanumSquareNeo';
+  src: url('/fonts/nanumsquareneo/NANUMSQUARENEOOTF-RG.OTF') format('opentype');
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NanumSquareNeo';
+  src: url('/fonts/nanumsquareneo/NANUMSQUARENEOOTF-BD.OTF') format('opentype');
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NanumSquareNeo';
+  src: url('/fonts/nanumsquareneo/NANUMSQUARENEOOTF-EB.OTF') format('opentype');
+  font-weight: 800;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
   --bg: #1a1a1a;
@@ -15,7 +37,14 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, 'Noto Sans KR', sans-serif;
+  font-family: 'NanumSquareNeo', system-ui, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: 'NanumSquareNeo', system-ui, sans-serif;
 }
 
 button {
@@ -831,4 +860,259 @@ mark.mk-down {
 .overlay-off {
   padding: 1px 8px;
   font-size: 12px;
+}
+
+/* 노션 대시보드 : 가운데 정렬 페이지, 토글 블록, 데이터베이스 표 · 보드 */
+.page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+.page h1 {
+  margin: 0;
+  font-size: 34px;
+}
+
+.subtitle {
+  margin: 4px 0 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.toggle-block {
+  margin-top: 18px;
+}
+
+.toggle-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  background: none;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.toggle-head:hover {
+  background: #262626;
+}
+
+.toggle-head .caret {
+  width: 16px;
+  color: var(--muted);
+}
+
+.toggle-body {
+  padding: 8px 6px 4px 28px;
+}
+
+.db-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.db-tab {
+  border: none;
+  border-radius: 0;
+  background: none;
+  padding: 6px 12px;
+  color: var(--muted);
+}
+
+.db-tab.on {
+  color: var(--text);
+  border-bottom: 2px solid var(--text);
+}
+
+.db-chips {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.chip-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 14px;
+  font-size: 13px;
+}
+
+.chip-filter.on {
+  background: #2f2f2f;
+}
+
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.db-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.db-table th,
+.db-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #2f2f2f;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.db-table th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.db-table th:hover {
+  color: var(--text);
+}
+
+.db-table tbody tr {
+  cursor: pointer;
+}
+
+.db-table tbody tr:hover {
+  background: #262626;
+}
+
+.db-title {
+  font-weight: 600;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.board-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: #1f1f1f;
+  border-radius: 10px;
+}
+
+.board-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.board-card {
+  display: block;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid #333;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.board-card:hover {
+  background: #2c2c2c;
+}
+
+.board-title {
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.board-meta {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.tag {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: #3a3a3a;
+  font-size: 12px;
+}
+
+.kind + .kind {
+  margin-left: 4px;
+}
+
+/* 옵시디언 문서 보기 : 좁은 읽기 폭, 접히는 속성 블록, 내부 링크 */
+.reader {
+  max-width: 720px;
+}
+
+.reader h1 {
+  font-size: 34px;
+  line-height: 1.25;
+}
+
+.obs-props {
+  margin: 0 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.obs-props-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+}
+
+.obs-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 18px;
+  margin: 0;
+  padding: 4px 12px 12px;
+  font-size: 14px;
+}
+
+.obs-dl dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.obs-dl dd {
+  margin: 0;
+}
+
+.reader .body {
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.wikilink {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: #a88bfa;
+  font-size: 15px;
+}
+
+.wikilink:hover {
+  text-decoration: underline;
 }
