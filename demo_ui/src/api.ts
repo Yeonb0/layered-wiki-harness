@@ -15,6 +15,13 @@ export type ViewersResponse = {
   viewers: Viewer[]
 }
 
+export type HealthResponse = {
+  status: string
+  modes: Mode[]
+  base_notes: Record<string, number>
+  base_run: string
+}
+
 export type ViewNote = {
   note_id: string
   title: string
@@ -68,4 +75,8 @@ export function fetchView(mode: Mode, viewerId: string): Promise<ViewResponse> {
   // viewer_id 에 한글이 들어 있어 쿼리를 문자열로 이어 붙이지 않는다
   const query = new URLSearchParams({ mode, viewer: viewerId })
   return getJson<ViewResponse>(`/view?${query.toString()}`)
+}
+
+export function fetchHealth(): Promise<HealthResponse> {
+  return getJson<HealthResponse>('/health')
 }
