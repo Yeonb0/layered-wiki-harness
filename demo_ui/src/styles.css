@@ -38,6 +38,9 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: 'NanumSquareNeo', system-ui, sans-serif;
+  /* 사용자 요청 2026-10-23 : 한글이 글자 중간에서 끊기지 않게 띄어쓰기 단위로 줄을 바꾼다 */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 button,
@@ -313,7 +316,7 @@ button.link {
 /* 작업 공간 : 리본 | 탐색기 | 가운데 탭 | 연결 패널, 아래 상태 막대 */
 .shell {
   display: grid;
-  grid-template-columns: 76px 270px minmax(0, 1fr) 300px;
+  /* 열 너비는 탐색기 · 연결 패널 폭을 기억해야 해서 Workspace 가 인라인으로 정한다 */
   grid-template-rows: minmax(0, 1fr) 28px;
   height: 100vh;
 }
@@ -337,6 +340,8 @@ button.link {
 .ribbon button {
   padding: 8px 2px;
   font-size: 12px;
+  white-space: normal;
+  line-height: 1.25;
 }
 
 .sidebar {
@@ -1115,4 +1120,40 @@ mark.mk-down {
 
 .wikilink:hover {
   text-decoration: underline;
+}
+
+/* 패널 폭 손잡이 : 6px 자리에 가운데 1px 선만 보이고 올리거나 초점이 오면 강조색이 된다 */
+.resizer {
+  width: 6px;
+  background: transparent;
+  cursor: col-resize;
+  position: relative;
+  touch-action: none;
+}
+
+.resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: var(--line);
+}
+
+.resizer:hover::after,
+.resizer:focus-visible::after,
+body.resizing .resizer::after {
+  background: #a88bfa;
+  width: 2px;
+  left: 2px;
+}
+
+.resizer:focus-visible {
+  outline: none;
+}
+
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
 }
