@@ -1,10 +1,11 @@
 // 사용자 결정 2026-10-21 · 23 : 시연 경로 전용 화면 - 그래프 탭은 서버가 거른 노트만 그리고, 노드를 누르면 그 노트 탭을 연다
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { MarkerType, ReactFlow, ReactFlowProvider, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { ViewResponse } from './api'
 import { DOWNWARD_COLOR, LAYER_COLOR, UPWARD_COLOR } from './colors'
 import { buildEdges, edgeStyle, filterEdges, type LinkEdge } from './edges'
+import { ForceGraph } from './ForceGraph'
 import { layoutNotes } from './layout'
 import { BandNode, CellNode, NoteNode, type NoteFlowNode } from './NoteNode'
 
@@ -47,6 +48,8 @@ export function GraphTab({
   selectedId: string | null
   onOpenNote: (noteId: string) => void
 }) {
+  // 보기 전환 상태는 Workspace 를 거치지 않고 이 탭 안에 둔다 - 기본은 힘 그래프다
+  const [view, setView] = useState<'force' | 'bands'>('force')
   const layout = useMemo(() => layoutNotes(data.notes), [data.notes])
   const allEdges = useMemo(() => buildEdges(data.notes), [data.notes])
   const edges = useMemo(
@@ -86,8 +89,33 @@ export function GraphTab({
     return out
   }, [layout, selectedId])
 
+  const switcher = (
+    <div className="graph-switch">
+      <button className={view === 'force' ? 'db-tab on' : 'db-tab'} onClick={() => setView('force')}>
+        힘 그래프
+      </button>
+      <button className={view === 'bands' ? 'db-tab on' : 'db-tab'} onClick={() => setView('bands')}>
+        층 띠
+      </button>
+    </div>
+  )
+  if (view === 'force') {
+    return (
+      <div className="graph-tab">
+        {switcher}
+        <ForceGraph
+          data={data}
+          showSameLayer={showSameLayer}
+          onToggleSameLayer={onToggleSameLayer}
+          selectedId={selectedId}
+          onOpenNote={onOpenNote}
+        />
+      </div>
+    )
+  }
   return (
     <div className="graph-tab">
+      {switcher}
       <div className="graph-bar">
         {/* 화면 표시 선택일 뿐 데이터는 그대로다 */}
         <label className="toggle">

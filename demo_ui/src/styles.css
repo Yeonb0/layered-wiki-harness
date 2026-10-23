@@ -1182,3 +1182,141 @@ body.resizing {
 .db {
   overflow-x: auto;
 }
+
+/* 힘 그래프 : 가운데 칸을 꽉 채우는 SVG, 설정 상자 · 범례 · 맞춤 버튼, 흐르는 점선 */
+.graph-switch {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.fg {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #161616;
+  overflow: hidden;
+}
+
+.fg-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.fg-svg:active {
+  cursor: grabbing;
+}
+
+.fg-node {
+  cursor: pointer;
+}
+
+.fg-node text {
+  pointer-events: none;
+  user-select: none;
+}
+
+.fg-edge,
+.fg-flow {
+  pointer-events: none;
+  fill: none;
+}
+
+/* 강조된 하향 링크는 점선이 위 → 아래로 흐른다 */
+.fg-edge.downward.hl {
+  animation: fg-dash 0.8s linear infinite;
+}
+
+/* 강조된 상향 링크 위의 흐름 선 ( 아래 → 위 방향으로 흐른다 ) */
+.fg-flow {
+  animation: fg-dash 0.9s linear infinite;
+}
+
+@keyframes fg-dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fg-edge.downward.hl,
+  .fg-flow {
+    animation: none;
+  }
+}
+
+.fg-fit {
+  position: absolute;
+  top: 12px;
+  right: 252px;
+  z-index: 5;
+  font-size: 12px;
+}
+
+.fg-settings {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  width: 230px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.fg-settings-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: none;
+  text-align: left;
+  color: var(--muted);
+}
+
+.fg-settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 12px 12px;
+}
+
+.fg-settings-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fg-settings-body label:has(input[type='checkbox']) {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.fg-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 5;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.fg-legend svg {
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.fg-legend-layers {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
