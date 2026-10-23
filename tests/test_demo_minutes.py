@@ -16,7 +16,7 @@ from datetime import datetime
 import serve.demo_api as D
 from agent.layer_block import MARK
 from agent.llm_client import ChatResult
-from runner.v2_sequential import run_v2
+from runner.v2_sequential import load_source_docs, run_v2
 from segmentation.segment import process_doc
 from serve.demo_api import DemoApp, make_server
 from serve.meetings import MeetingStore
@@ -235,7 +235,7 @@ class SubmitTest(MinutesBase):
     self.assertEqual(Record["raw_sha256"], hashlib.sha256(_MINUTES.encode("utf-8")).hexdigest())
     self.assertEqual((Record["source_layer"], Record["source_group"], Record["submitted_by"]), ("팀", "팀1", "팀원A"))
     Doc = App.docs[DocId]
-    self.assertEqual((Doc.source_layer, Doc.source_group, Doc.source_team), ("팀", "팀1", "팀1"))
+    self.assertEqual((Doc.source_layer, Doc.source_group, Doc.source_team), ("팀", "팀1", None))
     self.assertEqual([S.text for S in Doc.segments], [S["text"] for S in Record["segments"]])
     self.assertEqual(App.raw_sha[DocId], Record["raw_sha256"])
     self.assertEqual(App.meetings.get_meeting(("개인", "팀원A"), "m0007")["minutes_doc_id"], DocId)
@@ -245,6 +245,37 @@ class SubmitTest(MinutesBase):
     DocId = self.submit(App, Meeting="m0005")
     Doc = App.docs[DocId]
     self.assertEqual((Doc.source_layer, Doc.source_group, Doc.source_team), ("전사", None, None))
+
+
+class SourceDocShapeTest(MinutesBase):
+  def test_source_team_is_none_and_loader_gives_the_same_source_doc(self) -> None:
+    App = self.app()
+    Ids = [self.submit(App, Meeting="m0007"), self.submit(App, Meeting="m0005")]
+    Records = [App.minutes.get(Id) for Id in Ids]
+    Docs = [App.docs[Id] for Id in Ids]
+    self.assertEqual([(D.source_layer, D.source_group, D.source_team) for D in Docs], [("팀", "팀1", None), ("전사", None, None)])
+    # 같은 필드 값으로 실험 경로의 docs · segments 레코드 ( team 키 없음 ) 를 만들어 load_source_docs 에 넣는다
+    Paths = {Name: os.path.join(self.Work.name, Name) for Name in ("docs.jsonl", "segments.jsonl", "ids.txt", "selection.json")}
+    with open(Paths["docs.jsonl"], "w", encoding="utf-8") as File:
+      for Record in Records:
+        File.write(json.dumps({
+          "doc_id": Record["doc_id"], "title": Record["title"], "layer": Record["source_layer"], "group": Record["source_group"],
+          "raw_sha256": Record["raw_sha256"],
+        }, ensure_ascii=False) + "\n")
+    with open(Paths["segments.jsonl"], "w", encoding="utf-8") as File:
+      for Record in Records:
+        for Seg in Record["segments"]:
+          File.write(json.dumps({
+            "segment_id": Seg["segment_id"], "doc_id": Record["doc_id"], "seq": Seg["seq"], "layer": Record["source_layer"],
+            "group": Record["source_group"], "text": Seg["text"],
+          }, ensure_ascii=False) + "\n")
+    with open(Paths["ids.txt"], "w", encoding="utf-8") as File:
+      File.write("".join(f"{Id}\n" for Id in Ids))
+    with open(Paths["selection.json"], "w", encoding="utf-8") as File:
+      json.dump({"excluded_pages": {"ids": []}}, File)
+    Loaded, RawSha = load_source_docs(Paths["segments.jsonl"], Paths["docs.jsonl"], Paths["ids.txt"], Paths["ids.txt"], Paths["selection.json"])
+    self.assertEqual(sorted(Loaded, key=lambda Doc: Doc.doc_id), Docs)
+    self.assertEqual(RawSha, {Record["doc_id"]: Record["raw_sha256"] for Record in Records})
 
 
 class HttpTest(MinutesBase):
@@ -373,8 +404,16 @@ class FlowTest(MinutesBase):
     Status, Body = self.decide(App, "개인:팀원A", DocId, [{"note_index": 0, "decision": "approve"}])
     self.assertEqual((Status, Body["error_type"]), (409, "Conflict"))
     self.assertEqual(self.get(App, "/proposals", "개인:팀원A")[1]["proposals"][0]["status"], "failed")
-    # 회의 연결은 실패한 뒤에도 남는다
-    self.assertEqual(App.meetings.get_meeting(("개인", "팀원A"), "m0007")["minutes_doc_id"], DocId)
+    # 실패한 투입은 기록으로 남고 회의 연결은 풀린다
+    self.assertIsNone(App.meetings.get_meeting(("개인", "팀원A"), "m0007")["minutes_doc_id"])
+    self.assertEqual(App.minutes.get(DocId)["status"], "failed")
+    # 같은 회의에 다시 투입할 수 있고 목록에는 실패 doc 와 새 doc 가 status 로 구분돼 나온다
+    Status, Body = self.post(App, "/minutes", "개인:팀원A", meeting_id="m0007", mode="all_layers", text=_MINUTES)
+    self.assertEqual(Status, 202, Body)
+    self.assertTrue(App.jobs[Body["job_id"]]["event"].wait(30))
+    Listed = self.get(App, "/proposals", "개인:팀원A")[1]["proposals"]
+    self.assertEqual([(Item["doc_id"], Item["status"]) for Item in Listed], [(DocId, "failed"), (Body["doc_id"], "awaiting_approval")])
+    self.assertEqual(App.meetings.get_meeting(("개인", "팀원A"), "m0007")["minutes_doc_id"], Body["doc_id"])
 
   def test_decide_rules(self) -> None:
     App = self.app()
@@ -496,10 +535,17 @@ class StorageTest(MinutesBase):
     Store.create(
       {"meeting_id": "m0007", "title": "합성 회의", "workspace": {"layer": "팀", "group": "팀1"}}, "all_layers", _MINUTES, "팀원A", _NOW,
     )
-    App = self.app()
+    # 회의록 저장소를 붙이기 전에 연결부터 걸어 둔다 - 서버가 꺼질 때의 상태다
+    Before = DemoApp(
+      self.RunDemo, chat_fn=_chat, embed_backend=_embed, commit_fn=lambda: "d" * 40, work_root=self.Work.name, print_fn=lambda Line: None,
+    )
+    MeetingStore(self.File, _SEED, Before.membership, Before.labels, now_fn=lambda: _NOW).link_minutes("m0007", _FIRST_DOC)
+    App = self.app(Seed=None)
     Record = App.minutes.get(_FIRST_DOC)
     self.assertEqual(Record["status"], "failed")
     self.assertTrue(Record["error"].startswith("Interrupted"))
+    # 연결을 걸어 둔 채 멈춘 doc 도 시작 때 연결이 풀린다
+    self.assertIsNone(App.meetings.get_meeting(("개인", "팀원A"), "m0007")["minutes_doc_id"])
 
   def test_broken_minutes_file_stops_start(self) -> None:
     os.makedirs(self.MinutesDir)

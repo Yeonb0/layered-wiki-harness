@@ -40,14 +40,15 @@ def segment_rows(doc_id: str, Segs: list) -> list:
 
 def source_doc_of(Record: dict) -> SourceDoc:
   # runner.v2_sequential.load_source_docs 가 만드는 SourceDoc 과 같은 필드다 ( 정의 : agent/types.py )
-  # 팀 회의 : 층 팀 · 그룹 팀 이름 · 팀 워크스페이스 팀 이름 / 전사 회의 : 전사 · None · None
+  # 팀 회의 : 층 팀 · 그룹 팀 이름 / 전사 회의 : 전사 · None - source_team 은 항상 None 이다
   return SourceDoc(
     doc_id=Record["doc_id"],
     title=Record["title"],
     source_layer=Record["source_layer"],
     source_group=Record["source_group"],
     segments=[SourceSegment(segment_id=S["segment_id"], seq=S["seq"], text=S["text"]) for S in Record["segments"]],
-    source_team=Record["source_group"] if Record["source_layer"] == "팀" else None,
+    # 실험 경로 load_source_docs 와 같은 모양 - 개인이 아닌 문서에는 team 을 두지 않는다 ( 채팅 Claude 보정 1 의 오류 정정 )
+    source_team=None,
   )
 
 

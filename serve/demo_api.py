@@ -668,9 +668,16 @@ class DemoApp:
     for Record in Store.docs():
       if Record["status"] == "running":
         # 서버가 꺼져 작업이 끝나지 못한 doc 는 조용히 두지 않고 실패로 남긴다
-        Record = Store.update(Record["doc_id"], status="failed", error="Interrupted : 서버가 다시 시작돼 작업이 끝나지 못했다")
+        Record = self._fail_minutes(Record["doc_id"], "Interrupted : 서버가 다시 시작돼 작업이 끝나지 못했다")
       self.docs[Record["doc_id"]] = source_doc_of(Record)
       self.raw_sha[Record["doc_id"]] = Record["raw_sha256"]
+
+  def _fail_minutes(self, DocId: str, Error: str) -> dict:
+    # 실패한 투입은 기록으로 남기고 회의 연결은 풀어 다시 투입할 수 있게 한다
+    Saved = self.minutes.update(DocId, status="failed", error=Error)
+    if self.meetings is not None:
+      self.meetings.unlink_minutes(Saved["meeting_id"], DocId)
+    return Saved
 
   def _minutes_overlay(self, Notes: list, Mode: str, SkipDoc) -> tuple:
     if self.minutes is None:
@@ -782,8 +789,7 @@ class DemoApp:
     Status, Body = self.submit({"doc_id": DocId, "mode": Mode}, on_done=self._minutes_done)
     if Status != 202:
       # 잠금이 잡혀 있으면 doc 는 실패로 남기고 회의 연결은 되돌린다
-      self.minutes.update(DocId, status="failed", error=Body.get("error_type", "Unknown"))
-      self.meetings.unlink_minutes(MeetingId, DocId)
+      self._fail_minutes(DocId, Body.get("error_type", "Unknown"))
       return Status, Body
     self.minutes.update(DocId, job_id=Body["job_id"])
     return 202, {"ok": True, "doc_id": DocId, "job_id": Body["job_id"]}
@@ -802,9 +808,11 @@ class DemoApp:
           Fields.update(status="failed", error=f"DecomposeFailed : {Result['decompose']['error']}")
         else:
           Fields.update(status="awaiting_approval" if Result["notes"] else "decided", note_count=len(Result["notes"]))
-      self.minutes.update(DocId, **Fields)
+      Saved = self.minutes.update(DocId, **Fields)
+      if Saved["status"] == "failed":
+        self._fail_minutes(DocId, Saved["error"])
     except Exception as Error:
-      self.minutes.update(DocId, status="failed", error=f"{type(Error).__name__} : {Error}")
+      self._fail_minutes(DocId, f"{type(Error).__name__} : {Error}")
 
   def _proposal_doc(self, Target, DocId: str) -> tuple:
     # 볼 수 없는 회의의 doc 는 없는 doc 와 같은 404 다
