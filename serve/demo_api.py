@@ -15,7 +15,8 @@ from agent.llm_client import GenerationConfig, chat
 from agent.placement import MODES
 from agent.propose import _to_document_record, run_propose_doc
 from agent.types import DownwardLink, NoteRecord
-from labeling.gold import read_membership
+from build.public_build import view_selection
+from labeling.gold import read_membership, visible_pairs_for
 from retrieval.search import Retriever
 from runner.v2_sequential import (
   DEFAULT_WORK_ROOT,
@@ -49,6 +50,9 @@ _JOB_PATH = re.compile(r"/jobs/([0-9a-f]{32})")
 _WAIT_VALUE = re.compile(r"[0-9]+")
 # 본문 읽기에 실패해 이미 응답을 보냈다는 표지
 _BAD_BODY = object()
+# 사용자 결정 2026-10-22 : 합성 코퍼스는 가명 그대로 보인다 - 불러온 실행 manifest 의 args.snapshot 이 이 값이고 args.run_kind 가 아래 값일 때만
+DEMO_SNAPSHOT = 900
+DEMO_RUN_KIND = "demo"
 
 
 def _utc_now() -> str:
@@ -129,7 +133,9 @@ class DemoApp:
     # 사용자 결정 2026-10-22 : 검색 · 배치는 소속 팀 표를 쓰고 이름 가림은 주인 집합을 그대로 쓴다
     self.membership = read_membership(Args["source_layers"])
     self.owners = set(self.membership.teams_by_owner)
-    self.labels = owner_labels(self.owners)
+    # 사용자 결정 2026-10-22 : 합성 코퍼스는 가명 그대로, 실제 코퍼스 볼트는 주인A … 로 가린다 - 두 키가 args 에 없으면 가리는 쪽이라 조용한 실패가 아니다
+    self.show_names = Args.get("snapshot") == DEMO_SNAPSHOT and Args.get("run_kind") == DEMO_RUN_KIND
+    self.labels = {Name: Name for Name in self.owners} if self.show_names else owner_labels(self.owners)
     self.block, self.block_sha = load_layer_block(Args["criteria"], Args["criteria_sha256"])
     self.harness_commit = commit_fn()
     self.base_trial_id = Manifest["trial_id"]
@@ -178,6 +184,97 @@ class DemoApp:
       }
       for Doc in self.docs.values()
     ]
+
+  def viewers(self) -> dict:
+    # 사용자 결정 2026-10-21 : 시연의 보는 사람별 보기는 서버 쪽 필터 결과이며 화면 로직이 아니다 - 보는 사람 목록도 서버가 낸다
+    Personal = sorted(
+      (
+        {"viewer_id": "개인:" + self.labels[Owner], "layer": "개인", "label": self.labels[Owner], "teams": sorted(Teams)}
+        for Owner, Teams in self.membership.teams_by_owner.items()
+      ),
+      key=lambda Item: Item["label"],
+    )
+    Teams = {Team for Teams_ in self.membership.teams_by_owner.values() for Team in Teams_}
+    Teams |= {Doc.source_group for Doc in self.docs.values() if Doc.source_layer == "팀"}
+    Team_items = [
+      {"viewer_id": "팀:" + Team, "layer": "팀", "label": Team, "teams": [Team]} for Team in sorted(Teams)
+    ]
+    Company = [{"viewer_id": "전사", "layer": "전사", "label": "전사", "teams": []}]
+    return self._mask({"show_names": self.show_names, "viewers": Personal + Team_items + Company})
+
+  def _viewer_target(self, viewer_id: str):
+    # 가린 label 을 실제 주인으로 되돌린다 - 목록에 없는 id 는 None
+    for Item in self.viewers()["viewers"]:
+      if Item["viewer_id"] == viewer_id:
+        break
+    else:
+      return None
+    if viewer_id == "전사":
+      return "전사", None
+    Layer, _, Label = viewer_id.partition(":")
+    if Layer == "팀":
+      return "팀", Label
+    for Owner in self.membership.teams_by_owner:
+      if self.labels[Owner] == Label:
+        return "개인", Owner
+    return None
+
+  def view(self, mode: str, viewer_id: str, job_id) -> tuple:
+    if mode not in self.cells:
+      return 400, {"ok": False, "error_type": "BadRequest", "message": f"불러온 모드가 아니다: {list(self.cells)}"}
+    Target = self._viewer_target(viewer_id)
+    if Target is None:
+      return 400, {"ok": False, "error_type": "BadRequest", "message": "viewers 에 없는 viewer 이다"}
+    Notes = [asdict(Note) for Note in self.cells[mode]["notes"]]
+    Dropped = None
+    if job_id is not None:
+      Job = self.jobs.get(job_id)
+      if Job is None:
+        return 404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 job_id"}
+      # 끝나지 않았거나 다른 모드로 돈 작업의 노트는 이 모드의 기본 볼트와 맞지 않는다
+      if Job["status"] != "completed" or Job["mode"] != mode:
+        return 400, {"ok": False, "error_type": "BadRequest", "message": "완료된 같은 mode 의 작업이어야 한다"}
+      Notes, Dropped = self._overlay(Notes, Job)
+    try:
+      Pairs = visible_pairs_for(Target[0], Target[1], self.membership)
+      Included, Links, Counts = view_selection(Notes, Pairs)
+      Items = []
+      for Note in Included:
+        Up, Opened = Links[Note["note_id"]]
+        # 사용자 결정 2026-10-22 : 실제 코퍼스 실행은 본문을 글자 수로 가린다 ( build_view 의 --redact-body 와 같은 문구 )
+        Body = Note["body"] if self.show_names else f"( 본문 {len(Note['body'])}자 가림 )"
+        Items.append({
+          "note_id": Note["note_id"], "title": Note["title"], "layer": Note["layer"],
+          "group_label": group_label(Note["layer"], Note["group"], self.labels), "body": Body,
+          "source_doc_id": Note["source_doc_id"], "source_layer": Note["source_layer"],
+          "source_segment_ids": list(Note["source_segment_ids"]), "upward_links": Up, "opened_downward_links": Opened,
+          "inserted_at_vault_size": Note["inserted_at_vault_size"],
+        })
+    except ValueError as Error:
+      return 500, self._mask({"ok": False, "error_type": "ValueError", "message": str(Error)})
+    if Dropped is not None:
+      Counts["overlay_dangling_links_dropped"] = Dropped
+    return 200, self._mask({"mode": mode, "viewer_id": viewer_id, "show_names": self.show_names, "notes": Items, "counts": Counts})
+
+  def _overlay(self, Notes: list, Job: dict) -> tuple:
+    # 완료된 작업의 새 노트가 그 문서의 기본 노트를 대신한다 - 요청 상태와 같은 규칙이다
+    Result = Job["result"] or {}
+    Path = os.path.join(Result["request_dir"], "new_notes.jsonl")
+    with open(Path, encoding="utf-8") as File:
+      New = [json.loads(Line) for Line in File if Line.strip()]
+    Kept = [Note for Note in Notes if Note["source_doc_id"] != Job["doc_id"]]
+    Ids = {Note["note_id"] for Note in Kept + New}
+    Dropped = 0
+    Out = []
+    for Note in Kept:
+      Note = dict(Note)
+      # 지워진 기존 노트를 가리키던 링크는 대상이 없어 깨진 데이터가 되므로 빼고 수만 센다
+      Up = [Target for Target in Note["upward_links"] if Target in Ids]
+      Down = [Link for Link in Note["downward_conditional_links"] if Link["target_id"] in Ids]
+      Dropped += len(Note["upward_links"]) - len(Up) + len(Note["downward_conditional_links"]) - len(Down)
+      Note["upward_links"], Note["downward_conditional_links"] = Up, Down
+      Out.append(Note)
+    return Out + New, Dropped
 
   def _mask(self, Obj):
     # 시연 앞단 ( 사용자 결정 2026-10-16 Dify 필수 ) : 모델이 만든 제목이나 오류 문구에 실제 주인 이름이 섞여도 응답에는 가린 이름만 나가게 한다
@@ -431,21 +528,39 @@ class DemoApp:
     return 200, Response
 
 
-def make_handler(App: DemoApp):
+def make_handler(App: DemoApp, cors_origin=None):
   class Handler(BaseHTTPRequestHandler):
     def _send(self, Status: int, Obj) -> None:
       Data = json.dumps(Obj, ensure_ascii=False).encode("utf-8")
       self.send_response(Status)
       self.send_header("Content-Type", "application/json; charset=utf-8")
       self.send_header("Content-Length", str(len(Data)))
+      # 사용자 결정 2026-10-21 : 화면은 다른 출처에서 서버 쪽 필터 결과만 읽는다 - 옵션을 줬을 때만 CORS 헤더를 보낸다
+      if cors_origin is not None:
+        self.send_header("Access-Control-Allow-Origin", cors_origin)
       self.end_headers()
       self.wfile.write(Data)
+
+    def do_OPTIONS(self) -> None:
+      if cors_origin is None:
+        self._send(404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"})
+        return
+      self.send_response(204)
+      self.send_header("Access-Control-Allow-Origin", cors_origin)
+      self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+      self.send_header("Access-Control-Allow-Headers", "Content-Type")
+      self.send_header("Content-Length", "0")
+      self.end_headers()
 
     def do_GET(self) -> None:
       if self.path == "/health":
         self._send(200, App.health())
       elif self.path == "/docs":
         self._send(200, App.doc_list())
+      elif urlsplit(self.path).path == "/viewers":
+        self._send(200, App.viewers())
+      elif urlsplit(self.path).path == "/view":
+        self._view(urlsplit(self.path).query)
       else:
         # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
         Parts = urlsplit(self.path)
@@ -458,6 +573,16 @@ def make_handler(App: DemoApp):
           return
         Status, Obj = App.job_status(Match.group(1), Wait)
         self._send(Status, Obj)
+
+    def _view(self, Query: str) -> None:
+      # mode · viewer 는 정확히 하나씩, job 은 많아야 하나 - 그 밖은 400
+      Params = parse_qs(Query, keep_blank_values=True)
+      Mode, Viewer, Job = Params.get("mode", []), Params.get("viewer", []), Params.get("job", [])
+      if len(Mode) != 1 or len(Viewer) != 1 or len(Job) > 1 or not Mode[0] or not Viewer[0] or (Job and not Job[0]):
+        self._send(400, {"ok": False, "error_type": "BadRequest", "message": "mode · viewer 는 하나씩, job 은 많아야 하나여야 한다"})
+        return
+      Status, Obj = App.view(Mode[0], Viewer[0], Job[0] if Job else None)
+      self._send(Status, Obj)
 
     def _parse_wait(self, Query: str):
       # wait 는 없으면 0, 0 ~ MAX_WAIT_SECONDS 정수 하나만 받는다 - 그 밖은 400 을 보내고 None
@@ -500,9 +625,9 @@ def make_handler(App: DemoApp):
   return Handler
 
 
-def make_server(App: DemoApp, host: str, port: int) -> ThreadingHTTPServer:
+def make_server(App: DemoApp, host: str, port: int, cors_origin=None) -> ThreadingHTTPServer:
   # 동시에 들어온 요청이 409 를 받으려면 요청마다 스레드가 있어야 한다
-  return ThreadingHTTPServer((host, port), make_handler(App))
+  return ThreadingHTTPServer((host, port), make_handler(App, cors_origin))
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -511,6 +636,8 @@ def parse_args(argv=None) -> argparse.Namespace:
   Parser.add_argument("--run-dir", required=True)
   Parser.add_argument("--host", required=True)
   Parser.add_argument("--port", required=True, type=int)
+  # 기본값을 두지 않는다 - 주지 않으면 CORS 헤더를 보내지 않는다
+  Parser.add_argument("--cors-origin", default=None)
   return Parser.parse_args(argv)
 
 
@@ -524,7 +651,7 @@ def main(argv=None) -> None:
     Args.run_dir, chat_fn=chat, embed_backend=None, commit_fn=lambda: git_head_commit(REPO_DIR),
     work_root=DEFAULT_WORK_ROOT, print_fn=_print_flush,
   )
-  Server = make_server(App, Args.host, Args.port)
+  Server = make_server(App, Args.host, Args.port, cors_origin=Args.cors_origin)
   _print_flush(f"serve host={Args.host} port={Args.port} modes={len(App.cells)} docs={len(App.docs)}")
   Server.serve_forever()
 

@@ -154,28 +154,13 @@ def visible_pairs(viewer_layer: str, viewer_group, owners: Membership) -> set:
   return visible_pairs_for(viewer_layer, viewer_group, owners)
 
 
-def build_view(
-  vault_path,
-  source_layers_path,
-  viewer_layer,
-  viewer_group,
-  out_dir,
-  work_root=DEFAULT_WORK_ROOT,
-  redact_body=False,
-  commit_fn=None,
-  print_fn=print,
-) -> dict:
-  commit_fn = commit_fn or (lambda: git_head_commit(REPO_DIR))
-  OutPath = _validate_out_dir(out_dir, work_root)
-  Owners = read_membership(source_layers_path)
-  Pairs = visible_pairs(viewer_layer, viewer_group, Owners)
-  Notes = read_vault(vault_path)
+def view_selection(Notes: list, Pairs: set) -> tuple:
+  # 사용자 결정 2026-10-21 : 시연의 보는 사람별 보기는 서버 쪽 필터 결과이며 화면 로직이 아니다 - 파일 보기와 시연 API 가 이 함수 하나를 쓴다
   AllIds = {Note["note_id"] for Note in Notes}
   Included = [Note for Note in Notes if (Note["layer"], Note["group"]) in Pairs]
   IncludedIds = {Note["note_id"] for Note in Included}
-  Names = _file_names(Included)
+  Links = {}
   Opened = HiddenDown = HiddenUp = 0
-  Files = {}
   for Note in Included:
     UpwardIds = []
     for Target in Note["upward_links"]:
@@ -198,6 +183,35 @@ def build_view(
       else:
         HiddenDown += 1
     Opened += len(OpenedIds)
+    Links[Note["note_id"]] = (UpwardIds, OpenedIds)
+  Counts = {"conditional_links_opened": Opened, "conditional_links_hidden": HiddenDown, "upward_links_hidden": HiddenUp}
+  return Included, Links, Counts
+
+
+def build_view(
+  vault_path,
+  source_layers_path,
+  viewer_layer,
+  viewer_group,
+  out_dir,
+  work_root=DEFAULT_WORK_ROOT,
+  redact_body=False,
+  commit_fn=None,
+  print_fn=print,
+) -> dict:
+  commit_fn = commit_fn or (lambda: git_head_commit(REPO_DIR))
+  OutPath = _validate_out_dir(out_dir, work_root)
+  Owners = read_membership(source_layers_path)
+  Pairs = visible_pairs(viewer_layer, viewer_group, Owners)
+  Notes = read_vault(vault_path)
+  Included, Links, Counts = view_selection(Notes, Pairs)
+  Names = _file_names(Included)
+  Opened, HiddenDown, HiddenUp = (
+    Counts["conditional_links_opened"], Counts["conditional_links_hidden"], Counts["upward_links_hidden"]
+  )
+  Files = {}
+  for Note in Included:
+    UpwardIds, OpenedIds = Links[Note["note_id"]]
     # 발표 캡처에 팀원 문서 본문이 노출되지 않게 본문만 길이로 대신한다
     Body = f"( 본문 {len(Note['body'])}자 가림 )" if redact_body else Note["body"]
     Files[Names[Note["note_id"]]] = _render_note(Note, Body, UpwardIds, OpenedIds)
