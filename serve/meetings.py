@@ -123,7 +123,7 @@ class MeetingStore:
       raise
 
   def _check_loaded(self) -> None:
-    # 구조와 워크스페이스만 시작 때 검사한다 - 회의 · 할 일 연결 규칙은 새로 쓸 때 검사한다 ( 예시 파일에는 그 규칙 밖의 연결이 있다 )
+    # 시작 때도 새로 쓸 때와 같은 규칙을 모든 항목에 적용한다 - 규칙 밖 데이터가 파일에 있으면 조용히 받지 않고 멈춘다 ( 지침 9절 조용한 실패 )
     if not isinstance(self.data, dict) or self.data.get("version") != 1:
       raise ValueError("회의 파일 version 이 1 이 아니다")
     for name, keys in (("meetings", _MEETING_KEYS), ("tasks", _TASK_KEYS)):
@@ -138,6 +138,40 @@ class MeetingStore:
       ids = [row[key] for row in self.data[name]]
       if len(set(ids)) != len(ids):
         raise ValueError(f"회의 파일의 {name} 에 id 중복이 있다")
+    meeting_workspace = {}
+    for row in self.data["meetings"]:
+      try:
+        self._check_meeting_fields({key: row[key] for key in _MEETING_INPUT})
+      except ValueError as Error:
+        raise ValueError(f"회의 파일의 회의 {row['meeting_id']} 가 규칙에 맞지 않는다: {Error}") from None
+      meeting_workspace[row["meeting_id"]] = row["workspace"]
+    for row in self.data["tasks"]:
+      try:
+        # source 는 API 로 만들 때만 사람으로 제한한다 - 시작 때는 agent_proposal · agent_confirmed 도 받는다 ( API 는 만들 수 없지만 파일에는 있을 수 있다 )
+        self._check_task_fields({key: row[key] for key in ("title", "workspace", "assignee", "due", "status", "source")})
+        self._check_progress(row["progress"])
+      except ValueError as Error:
+        raise ValueError(f"회의 파일의 할 일 {row['task_id']} 가 규칙에 맞지 않는다: {Error}") from None
+      meeting_id = row["meeting_id"]
+      if meeting_id is None:
+        continue
+      if meeting_id not in meeting_workspace:
+        raise ValueError(f"회의 파일의 할 일 {row['task_id']} 가 없는 회의 {meeting_id!r} 에 연결돼 있다 ( 연결 규칙 )")
+      if row["workspace"] != meeting_workspace[meeting_id]:
+        raise ValueError(f"회의 파일의 할 일 {row['task_id']} 가 다른 workspace 의 회의 {meeting_id} 에 연결돼 있다 ( 연결 규칙 )")
+
+  def _check_progress(self, progress) -> None:
+    if not isinstance(progress, list):
+      raise ValueError("progress 가 목록이 아니다")
+    for item in progress:
+      if not isinstance(item, dict) or set(item) != {"at", "author", "text"}:
+        raise ValueError("progress 항목은 { at, author, text } 이어야 한다")
+      _parse_time(item["at"], "progress.at")
+      if item["author"] not in self.owner_of:
+        raise ValueError(f"progress 작성자를 알 수 없다: {item['author']!r}")
+      text = item["text"]
+      if not isinstance(text, str) or not text.strip() or len(text) > PROGRESS_MAX_CHARS:
+        raise ValueError(f"progress text 는 1 ~ {PROGRESS_MAX_CHARS}자 문자열이어야 한다")
 
   # ---- 워크스페이스 · 보이는 범위 ----
   def _workspace(self, value) -> dict:

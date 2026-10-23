@@ -376,6 +376,61 @@ class StorageTest(MeetingsBase):
       self.assertEqual((Status, Body["error_type"]), (503, "MeetingsNotConfigured"), Path)
 
 
+class LoadCheckTest(MeetingsBase):
+  # 픽스처일 뿐이며 규칙과 무관하다 - 예시 파일을 복사해 규칙을 어기게 고친 파일로 시작을 시험한다
+  def write_edited(self, edit) -> None:
+    with open(_SEED, encoding="utf-8") as File:
+      data = json.load(File)
+    edit(data)
+    with open(self.File, "w", encoding="utf-8") as File:
+      json.dump(data, File, ensure_ascii=False)
+
+  def test_load_rejects_task_linked_to_other_workspace_meeting(self) -> None:
+    App = self.app(seeded=False)
+    # t0005 는 팀2 할 일인데 팀1 회의 m0003 에 붙인다
+    self.write_edited(lambda data: next(t for t in data["tasks"] if t["task_id"] == "t0005").update(meeting_id="m0003"))
+    with self.assertRaisesRegex(ValueError, "t0005"):
+      self.store(App, Seed=None)
+
+  def test_load_rejects_attendee_outside_workspace(self) -> None:
+    App = self.app(seeded=False)
+    # 팀2 회의 m0002 참석자에 팀1 만 속한 팀원A 를 넣는다
+    self.write_edited(lambda data: next(m for m in data["meetings"] if m["meeting_id"] == "m0002")["attendees"].append("팀원A"))
+    with self.assertRaisesRegex(ValueError, "m0002"):
+      self.store(App, Seed=None)
+
+  def test_load_rejects_other_rule_violations(self) -> None:
+    App = self.app(seeded=False)
+    edits = {
+      "시각 순서": lambda d: d["meetings"][0].update(starts_at="2026-10-07T16:00"),
+      "상태": lambda d: d["tasks"][0].update(status="끝"),
+      "기한 형식": lambda d: d["tasks"][0].update(due="내일"),
+      "담당자": lambda d: d["tasks"][0].update(assignee="팀원C"),
+      "source 값": lambda d: d["tasks"][0].update(source="사람"),
+      "진행 기록 형식": lambda d: d["tasks"][0].update(progress=[{"at": "어제", "author": "팀원B", "text": "합성"}]),
+      "없는 회의": lambda d: d["tasks"][0].update(meeting_id="m9999"),
+    }
+    for name, edit in edits.items():
+      self.write_edited(edit)
+      with self.assertRaises(ValueError, msg=name):
+        self.store(App, Seed=None)
+
+  def test_load_accepts_agent_sources_that_the_api_cannot_create(self) -> None:
+    App = self.app(seeded=False)
+    # API 로 만들 수 없을 뿐 파일에는 있을 수 있다
+    self.write_edited(lambda data: data["tasks"][0].update(source="agent_proposal"))
+    Store = self.store(App, Seed=None)
+    self.assertEqual(Store.list_tasks(("개인", "팀원B"), "m0001")[0]["source"], "agent_proposal")
+
+  def test_seed_passes_full_load_check(self) -> None:
+    App = self.app()
+    self.assertEqual(len(App.meetings.list_meetings(("개인", "팀원E"))), 7)
+    Status, Body = self.get(App, "/tasks", "팀:팀2")
+    self.assertEqual(Status, 200)
+    self.assertNotIn("m0003", json.dumps(Body, ensure_ascii=False))
+    self.assertEqual(self.ids(Body, "tasks", "task_id"), ["t0003", "t0006", "t0005"])
+
+
 class HttpTest(MeetingsBase):
   def serve(self, App, Cors=None) -> str:
     Server = make_server(App, "127.0.0.1", 0, cors_origin=Cors)

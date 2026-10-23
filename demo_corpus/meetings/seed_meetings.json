@@ -15,7 +15,7 @@
     {"task_id": "t0002", "meeting_id": "m0001", "title": "히트스톱 틱 수 실험", "workspace": {"layer": "팀", "group": "팀1"}, "assignee": "팀원A", "due": "2026-10-14", "status": "done", "source": "human", "progress": [{"at": "2026-10-13T20:00", "author": "팀원A", "text": "실험 결과를 다음 회의에 공유"}]},
     {"task_id": "t0003", "meeting_id": "m0002", "title": "환율표 초안", "workspace": {"layer": "팀", "group": "팀2"}, "assignee": "팀원C", "due": "2026-10-15", "status": "doing", "source": "human", "progress": []},
     {"task_id": "t0004", "meeting_id": "m0003", "title": "콤보 보상 의견 모으기 ( 전투팀 쪽 )", "workspace": {"layer": "팀", "group": "팀1"}, "assignee": "팀원E", "due": "2026-10-28", "status": "doing", "source": "human", "progress": []},
-    {"task_id": "t0005", "meeting_id": "m0003", "title": "콤보 보상 의견 모으기 ( 경제팀 쪽 )", "workspace": {"layer": "팀", "group": "팀2"}, "assignee": "팀원F", "due": "2026-10-28", "status": "todo", "source": "human", "progress": []},
+    {"task_id": "t0005", "meeting_id": null, "title": "콤보 보상 의견 모으기 ( 경제팀 쪽 )", "workspace": {"layer": "팀", "group": "팀2"}, "assignee": "팀원F", "due": "2026-10-28", "status": "todo", "source": "human", "progress": []},
     {"task_id": "t0006", "meeting_id": "m0004", "title": "장비 수리비 수치 초안", "workspace": {"layer": "팀", "group": "팀2"}, "assignee": "팀원D", "due": "2026-10-22", "status": "todo", "source": "human", "progress": []}
   ]
 }
