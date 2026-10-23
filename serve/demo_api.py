@@ -29,6 +29,7 @@ from runner.v2_sequential import (
   git_head_commit,
   load_source_docs,
 )
+from serve.meetings import MeetingStore, NotFoundError
 
 # 시연 앞단 ( 사용자 결정 2026-10-16 Dify 필수 ) : 시연은 제안 조건 실행의 설정을 그대로 쓰므로 실행 manifest 의 args 에서 읽을 키를 고정한다
 _REQUIRED_ARGS = (
@@ -49,6 +50,9 @@ MAX_BODY_BYTES = 4096
 MAX_WAIT_SECONDS = 60
 # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
 _JOB_PATH = re.compile(r"/jobs/([0-9a-f]{32})")
+# 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능 - 회의 · 할 일은 노트와 같은 층 규칙으로 서버가 거른다
+_MEETING_PATH = re.compile(r"/meetings(?:/([a-z0-9]{1,40}))?")
+_TASK_PATH = re.compile(r"/tasks(?:/([a-z0-9]{1,40})(/progress)?)?")
 _WAIT_VALUE = re.compile(r"[0-9]+")
 # 본문 읽기에 실패해 이미 응답을 보냈다는 표지
 _BAD_BODY = object()
@@ -142,10 +146,13 @@ def group_label(Layer: str, Group, Labels: dict):
 
 
 class DemoApp:
-  def __init__(self, run_dir, chat_fn, embed_backend, commit_fn, work_root, print_fn, dify_fn=None) -> None:
+  def __init__(self, run_dir, chat_fn, embed_backend, commit_fn, work_root, print_fn, dify_fn=None, meetings=None) -> None:
     self.chat_fn = chat_fn
     # 라이브 투입에서 Dify 스트리밍 이벤트를 차례로 내는 함수 - 없으면 라이브 투입을 받지 않는다
     self.dify_fn = dify_fn
+    # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능 - 회의 · 할 일은 노트와 같은 층 규칙으로 서버가 거른다
+    # 회의 저장소 - None 이면 회의 경로는 모두 503 이다. 저장소는 구성원 표 · 표시 이름이 필요해서 main 이 앱을 만든 뒤 붙이기도 한다
+    self.meetings = meetings
     self.print_fn = print_fn
     self.work_root = work_root
     self.base_run = os.path.basename(os.path.normpath(run_dir))
@@ -562,6 +569,71 @@ class DemoApp:
     # 워크플로 출력 · 오류 문구에 실제 주인 이름이 섞이지 않게 기존 가림 함수를 통과시킨다
     return 200, self._mask(Live)
 
+  # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능 - 회의 · 할 일은 노트와 같은 층 규칙으로 서버가 거른다
+  def meetings_request(self, method: str, path: str, query: dict, body) -> tuple:
+    if self.meetings is None:
+      return 503, {"ok": False, "error_type": "MeetingsNotConfigured", "message": "회의 기능이 설정되지 않았다"}
+    Match = _MEETING_PATH.fullmatch(path)
+    Task = _TASK_PATH.fullmatch(path)
+    if Match is None and Task is None:
+      return 404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"}
+    try:
+      # 모든 경로에 viewer 가 필수이고 목록에 없는 보는 사람은 400 이다
+      if method == "GET":
+        Values = query.get("viewer", [])
+        if len(Values) != 1 or not Values[0]:
+          raise ValueError("viewer 가 필요하다")
+        ViewerId = Values[0]
+        Single = {key: values for key, values in query.items() if key != "viewer"}
+        for key, values in Single.items():
+          if len(values) != 1:
+            raise ValueError(f"{key} 는 하나만 줄 수 있다")
+        Params = {key: values[0] for key, values in Single.items()}
+      else:
+        if not isinstance(body, dict) or not isinstance(body.get("viewer"), str) or not body["viewer"]:
+          raise ValueError("본문에 viewer 가 필요하다")
+        ViewerId = body["viewer"]
+        Params = {key: value for key, value in body.items() if key != "viewer"}
+      Target = self._viewer_target(ViewerId)
+      if Target is None:
+        raise ValueError("viewers 에 없는 viewer 이다")
+      Store = self.meetings
+      if Match is not None:
+        MeetingId = Match.group(1)
+        if method == "GET" and MeetingId is None:
+          _only = {"from", "to"}
+          if set(Params) - _only:
+            raise ValueError(f"모르는 쿼리: {sorted(set(Params) - _only)}")
+          Result = {"meetings": Store.list_meetings(Target, Params.get("from"), Params.get("to"))}
+          return 200, self._mask(Result)
+        if method == "GET":
+          if Params:
+            raise ValueError(f"모르는 쿼리: {sorted(Params)}")
+          return 200, self._mask(Store.get_meeting(Target, MeetingId))
+        if MeetingId is None:
+          return 201, self._mask(Store.create_meeting(Target, Params))
+        return 200, self._mask(Store.update_meeting(Target, MeetingId, Params))
+      TaskId, Progress = Task.group(1), Task.group(2)
+      if method == "GET":
+        if TaskId is not None:
+          return 404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"}
+        _only = {"meeting", "assignee"}
+        if set(Params) - _only:
+          raise ValueError(f"모르는 쿼리: {sorted(set(Params) - _only)}")
+        return 200, self._mask({"tasks": Store.list_tasks(Target, Params.get("meeting"), Params.get("assignee"))})
+      if TaskId is None:
+        return 201, self._mask(Store.create_task(Target, Params))
+      if Progress:
+        _only_keys = set(Params) - {"text"}
+        if _only_keys or "text" not in Params:
+          raise ValueError("진행 기록 본문은 { viewer, text } 이어야 한다")
+        return 200, self._mask(Store.add_progress(Target, TaskId, Params["text"]))
+      return 200, self._mask(Store.update_task(Target, TaskId, Params))
+    except NotFoundError as Error:
+      return 404, {"ok": False, "error_type": "NotFound", "message": str(Error)}
+    except ValueError as Error:
+      return 400, self._mask({"ok": False, "error_type": "BadRequest", "message": str(Error)})
+
   # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
   def job_status(self, job_id: str, wait_seconds: int) -> tuple[int, dict]:
     if not isinstance(wait_seconds, int) or isinstance(wait_seconds, bool) or not 0 <= wait_seconds <= MAX_WAIT_SECONDS:
@@ -702,6 +774,10 @@ def make_handler(App: DemoApp, cors_origin=None):
       elif urlsplit(self.path).path == "/live":
         Status, Obj = App.live_status()
         self._send(Status, Obj)
+      elif _MEETING_PATH.fullmatch(urlsplit(self.path).path) or _TASK_PATH.fullmatch(urlsplit(self.path).path):
+        Parts = urlsplit(self.path)
+        Status, Obj = App.meetings_request("GET", Parts.path, parse_qs(Parts.query, keep_blank_values=True), None)
+        self._send(Status, Obj)
       elif urlsplit(self.path).path == "/viewers":
         self._send(200, App.viewers())
       elif urlsplit(self.path).path == "/view":
@@ -754,6 +830,14 @@ def make_handler(App: DemoApp, cors_origin=None):
         return _BAD_BODY
 
     def do_POST(self) -> None:
+      Path = urlsplit(self.path).path
+      if self.path == Path and (_MEETING_PATH.fullmatch(Path) or _TASK_PATH.fullmatch(Path)):
+        Body = self._read_json_body()
+        if Body is _BAD_BODY:
+          return
+        Status, Obj = App.meetings_request("POST", Path, {}, Body)
+        self._send(Status, Obj)
+        return
       if self.path not in ("/run", "/jobs", "/live"):
         self._send(404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"})
         return
@@ -787,9 +871,15 @@ def parse_args(argv=None) -> argparse.Namespace:
   # 기본 URL · 기본 변수 이름을 두지 않는다 - 둘 중 하나만 주면 라이브 투입이 반쯤 설정된 채로 뜬다
   Parser.add_argument("--dify-url", default=None)
   Parser.add_argument("--dify-key-env", default=None)
+  # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능 - 회의 · 할 일은 노트와 같은 층 규칙으로 서버가 거른다
+  Parser.add_argument("--meetings-file", default=None)
+  Parser.add_argument("--meetings-seed", default=None)
   Args = Parser.parse_args(argv)
   if (Args.dify_url is None) != (Args.dify_key_env is None):
     Parser.error("--dify-url 과 --dify-key-env 는 함께 줘야 한다")
+  # 예시만 주면 쓸 파일이 없다
+  if Args.meetings_seed is not None and Args.meetings_file is None:
+    Parser.error("--meetings-seed 는 --meetings-file 과 함께 줘야 한다")
   return Args
 
 
@@ -805,6 +895,21 @@ def dify_fn_from_args(Args, environ=None):
   return make_dify_fn(Args.dify_url, Key)
 
 
+def meetings_from_args(Args, App, repo_dir=REPO_DIR):
+  if Args.meetings_file is None:
+    return None
+  # 가린 실행 ( 실제 코퍼스 ) 에는 합성 회의 데이터를 섞지 않는다
+  if not App.show_names:
+    raise SystemExit("회의 기능은 합성 시연 실행에서만 켠다")
+  Path = os.path.realpath(os.path.expanduser(Args.meetings_file))
+  Repo = os.path.realpath(repo_dir)
+  # 저장소 안에 쓰면 시연 중 바뀐 회의 파일이 커밋에 섞인다
+  if os.path.commonpath([Repo, Path]) == Repo:
+    raise SystemExit("회의 파일은 저장소 밖 시연 작업 폴더에 둔다")
+  Seed = os.path.expanduser(Args.meetings_seed) if Args.meetings_seed is not None else None
+  return MeetingStore(Path, Seed, App.membership, App.labels)
+
+
 def _print_flush(Line: str) -> None:
   print(Line, flush=True)
 
@@ -815,6 +920,7 @@ def main(argv=None) -> None:
     Args.run_dir, chat_fn=chat, embed_backend=None, commit_fn=lambda: git_head_commit(REPO_DIR),
     work_root=DEFAULT_WORK_ROOT, print_fn=_print_flush, dify_fn=dify_fn_from_args(Args),
   )
+  App.meetings = meetings_from_args(Args, App)
   Server = make_server(App, Args.host, Args.port, cors_origin=Args.cors_origin)
   _print_flush(f"serve host={Args.host} port={Args.port} modes={len(App.cells)} docs={len(App.docs)}")
   Server.serve_forever()

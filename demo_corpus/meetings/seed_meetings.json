@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "note": "합성 시연 데이터. 사용자 결정 2026-10-23 : 회의 기능은 시연 경로 전용이며 합성 이름만 쓴다",
+  "meetings": [
+    {"meeting_id": "m0001", "title": "전투팀 회의 : 피격 판정 개편", "starts_at": "2026-10-07T14:00", "ends_at": "2026-10-07T15:00", "workspace": {"layer": "팀", "group": "팀1"}, "attendees": ["팀원A", "팀원B", "팀원E", "팀원F"], "agenda": ["히트박스 테이블화", "히트스톱 도입"], "minutes_doc_id": "90000000000000000000000000000005", "status": "done"},
+    {"meeting_id": "m0002", "title": "경제팀 회의 : 상점 개편", "starts_at": "2026-10-08T11:00", "ends_at": "2026-10-08T12:00", "workspace": {"layer": "팀", "group": "팀2"}, "attendees": ["팀원C", "팀원D", "팀원E", "팀원F"], "agenda": ["상점 가격표 교체", "할인 이벤트"], "minutes_doc_id": "90000000000000000000000000000009", "status": "done"},
+    {"meeting_id": "m0003", "title": "전투팀 회의 : 히트스톱과 콤보", "starts_at": "2026-10-14T14:00", "ends_at": "2026-10-14T15:00", "workspace": {"layer": "팀", "group": "팀1"}, "attendees": ["팀원A", "팀원B", "팀원E", "팀원F"], "agenda": ["히트스톱 결론", "새 콤보 시스템", "경제팀과 연결할 부분"], "minutes_doc_id": "90000000000000000000000000000006", "status": "done"},
+    {"meeting_id": "m0004", "title": "경제팀 회의 : 인플레이션 대응", "starts_at": "2026-10-15T11:00", "ends_at": "2026-10-15T12:00", "workspace": {"layer": "팀", "group": "팀2"}, "attendees": ["팀원C", "팀원D", "팀원E"], "agenda": ["골드 누적 문제", "대응 방안"], "minutes_doc_id": "90000000000000000000000000000010", "status": "done"},
+    {"meeting_id": "m0005", "title": "스튜디오 전체 플레이테스트 리뷰", "starts_at": "2026-10-28T16:00", "ends_at": "2026-10-28T17:30", "workspace": {"layer": "전사", "group": null}, "attendees": ["팀원A", "팀원B", "팀원C", "팀원D", "팀원E", "팀원F"], "agenda": ["2차 플레이테스트 결과 공유", "다음 빌드 일정"], "minutes_doc_id": null, "status": "scheduled"},
+    {"meeting_id": "m0006", "title": "전투팀 · 경제팀 연결 회의 준비", "starts_at": "2026-10-27T10:00", "ends_at": "2026-10-27T10:30", "workspace": {"layer": "개인", "group": "팀원E"}, "attendees": ["팀원E"], "agenda": ["콤보 보상 의견 정리", "두 팀에 낼 초안"], "minutes_doc_id": null, "status": "scheduled"},
+    {"meeting_id": "m0007", "title": "전투팀 회의 : 콤보 보상 연동", "starts_at": "2026-10-29T14:00", "ends_at": "2026-10-29T15:00", "workspace": {"layer": "팀", "group": "팀1"}, "attendees": ["팀원A", "팀원B", "팀원E", "팀원F"], "agenda": ["콤보 보상 경험치 / 골드 결정", "밸런스 시트 반영"], "minutes_doc_id": null, "status": "scheduled"}
+  ],
+  "tasks": [
+    {"task_id": "t0001", "meeting_id": "m0001", "title": "히트박스 테이블 초안", "workspace": {"layer": "팀", "group": "팀1"}, "assignee": "팀원B", "due": "2026-10-11", "status": "done", "source": "human", "progress": [{"at": "2026-10-10T18:00", "author": "팀원B", "text": "캐릭터 12종 히트박스를 시트로 옮김"}]},
+    {"task_id": "t0002", "meeting_id": "m0001", "title": "히트스톱 틱 수 실험", "workspace": {"layer": "팀", "group": "팀1"}, "assignee": "팀원A", "due": "2026-10-14", "status": "done", "source": "human", "progress": [{"at": "2026-10-13T20:00", "author": "팀원A", "text": "실험 결과를 다음 회의에 공유"}]},
+    {"task_id": "t0003", "meeting_id": "m0002", "title": "환율표 초안", "workspace": {"layer": "팀", "group": "팀2"}, "assignee": "팀원C", "due": "2026-10-15", "status": "doing", "source": "human", "progress": []},
+    {"task_id": "t0004", "meeting_id": "m0003", "title": "콤보 보상 의견 모으기 ( 전투팀 쪽 )", "workspace": {"layer": "팀", "group": "팀1"}, "assignee": "팀원E", "due": "2026-10-28", "status": "doing", "source": "human", "progress": []},
+    {"task_id": "t0005", "meeting_id": "m0003", "title": "콤보 보상 의견 모으기 ( 경제팀 쪽 )", "workspace": {"layer": "팀", "group": "팀2"}, "assignee": "팀원F", "due": "2026-10-28", "status": "todo", "source": "human", "progress": []},
+    {"task_id": "t0006", "meeting_id": "m0004", "title": "장비 수리비 수치 초안", "workspace": {"layer": "팀", "group": "팀2"}, "assignee": "팀원D", "due": "2026-10-22", "status": "todo", "source": "human", "progress": []}
+  ]
+}
