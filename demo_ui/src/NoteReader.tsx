@@ -5,17 +5,20 @@ import type { ViewNote } from './api'
 import { bodyLines } from './body'
 import { LAYER_COLOR } from './colors'
 import { classifyMarker, findMarkers, MARKER_KIND_LABEL, splitByMarkers } from './markers'
+import type { OpenEvent } from './tabs'
+import { WikiLink } from './WikiLink'
 
 export function NoteReader({
   note,
-  titles,
+  notesById,
   showNames,
   onOpenNote,
 }: {
   note: ViewNote
-  titles: Map<string, string>
+  // 지금 보기의 노트 - 링크 이름 · 미리보기는 여기서만 찾는다
+  notesById: Map<string, ViewNote>
   showNames: boolean
-  onOpenNote: (noteId: string) => void
+  onOpenNote: (noteId: string, ev?: OpenEvent) => void
 }) {
   // 속성 블록은 옵시디언처럼 머리를 누르면 접히고 기본은 펼침이다
   const [propsOpen, setPropsOpen] = useState(true)
@@ -39,9 +42,7 @@ export function NoteReader({
     ) : (
       <span className="chips">
         {ids.map((id) => (
-          <button key={id} className="wikilink" onClick={() => onOpenNote(id)}>
-            {`[[ ${titles.get(id) ?? id} ]]`}
-          </button>
+          <WikiLink key={id} noteId={id} notesById={notesById} onOpenNote={onOpenNote} />
         ))}
       </span>
     )
@@ -60,6 +61,10 @@ export function NoteReader({
         </dd>
         <dt>그룹</dt>
         <dd>{note.group_label ?? '없음'}</dd>
+        <dt>상향 링크</dt>
+        <dd>{chips(note.upward_links)}</dd>
+        <dt>열린 하향 조건부 링크</dt>
+        <dd>{chips(note.opened_downward_links)}</dd>
         <dt>출처 문서</dt>
         <dd className="mono">{note.source_doc_id}</dd>
         <dt>출처 세그먼트 ( {note.source_segment_ids.length} )</dt>
@@ -97,10 +102,6 @@ export function NoteReader({
           ),
         )}
       </div>
-      <h3>상향 링크</h3>
-      {chips(note.upward_links)}
-      <h3>열린 하향 조건부 링크</h3>
-      {chips(note.opened_downward_links)}
     </article>
   )
 }

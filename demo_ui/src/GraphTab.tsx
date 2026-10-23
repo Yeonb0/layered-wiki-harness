@@ -8,6 +8,7 @@ import { buildEdges, edgeStyle, filterEdges, type LinkEdge } from './edges'
 import { ForceGraph } from './ForceGraph'
 import { layoutNotes } from './layout'
 import { BandNode, CellNode, NoteNode, type NoteFlowNode } from './NoteNode'
+import type { OpenEvent } from './tabs'
 
 const NODE_TYPES = { note: NoteNode, cell: CellNode, band: BandNode }
 
@@ -46,7 +47,7 @@ export function GraphTab({
   showSameLayer: boolean
   onToggleSameLayer: (value: boolean) => void
   selectedId: string | null
-  onOpenNote: (noteId: string) => void
+  onOpenNote: (noteId: string, ev?: OpenEvent) => void
 }) {
   // 보기 전환 상태는 Workspace 를 거치지 않고 이 탭 안에 둔다 - 기본은 힘 그래프다
   const [view, setView] = useState<'force' | 'bands'>('force')
@@ -133,8 +134,8 @@ export function GraphTab({
             fitView
             nodesDraggable={false}
             nodesConnectable={false}
-            onNodeClick={(_, node) => {
-              if (node.type === 'note') onOpenNote(node.id)
+            onNodeClick={(event, node) => {
+              if (node.type === 'note') onOpenNote(node.id, event)
             }}
           />
         </ReactFlowProvider>

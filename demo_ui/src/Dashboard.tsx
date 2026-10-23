@@ -9,6 +9,7 @@ import { MARKER_KIND_LABEL } from './markers'
 import { dashboardStats } from './stats'
 import { MODE_LABEL } from './Sidebar'
 import { Toggle } from './Toggle'
+import type { OpenEvent } from './tabs'
 
 type ModeView = { data: ViewResponse | null; error: string | null }
 
@@ -36,7 +37,7 @@ function MarkerBadges({ row }: { row: Row }) {
   )
 }
 
-function Database({ rows, onOpenNote }: { rows: Row[]; onOpenNote: (noteId: string) => void }) {
+function Database({ rows, onOpenNote }: { rows: Row[]; onOpenNote: (noteId: string, ev?: OpenEvent) => void }) {
   const [viewKind, setViewKind] = useState<'table' | 'board'>('table')
   const [layers, setLayers] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'title', dir: 'asc' })
@@ -88,7 +89,7 @@ function Database({ rows, onOpenNote }: { rows: Row[]; onOpenNote: (noteId: stri
           </thead>
           <tbody>
             {shown.map((row) => (
-              <tr key={row.noteId} onClick={() => onOpenNote(row.noteId)}>
+              <tr key={row.noteId} onClick={(e) => onOpenNote(row.noteId, e)} onAuxClick={(e) => e.button === 1 && onOpenNote(row.noteId, e)}>
                 <td className="db-title">{row.title}</td>
                 <td>
                   <span className="badge" style={{ background: LAYER_COLOR[row.layer] }}>{row.layer}</span>
@@ -122,7 +123,12 @@ function Database({ rows, onOpenNote }: { rows: Row[]; onOpenNote: (noteId: stri
               </div>
               {columns[layer].length === 0 && <p className="muted">보이는 노트 없음</p>}
               {columns[layer].map((row) => (
-                <button key={row.noteId} className="board-card" onClick={() => onOpenNote(row.noteId)}>
+                <button
+                  key={row.noteId}
+                  className="board-card"
+                  onClick={(e) => onOpenNote(row.noteId, e)}
+                  onAuxClick={(e) => e.button === 1 && onOpenNote(row.noteId, e)}
+                >
                   <div className="board-title">{row.title}</div>
                   {row.group && <span className="tag">{row.group}</span>}
                   <div className="muted board-meta">{`상향 ${row.upward} · 열린 하향 ${row.openedDown}`}</div>
@@ -150,7 +156,7 @@ export function Dashboard({
   views: Record<Mode, ModeView>
   viewer: Viewer
   showNames: boolean
-  onOpenNote: (noteId: string) => void
+  onOpenNote: (noteId: string, ev?: OpenEvent) => void
 }) {
   const current = views[mode]
   const rows = useMemo(() => (current.data ? toRows(current.data, showNames) : []), [current.data, showNames])

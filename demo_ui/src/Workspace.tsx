@@ -2,13 +2,14 @@
 // 사용자 결정 2026-10-23 : 들어오는 링크 ( 백링크 같은 것 ) 는 보여 주지 않는다 - 고정 결정 "백링크 미기록" 과 헷갈리지 않게
 // 사용자 결정 2026-10-21 · 23 : 보는 사람별 거르기는 서버가 하고 화면은 받은 것만 그린다. 보는 사람 선택은 인증이 아니다
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchMeetings, type Mode, type Viewer } from './api'
+import { fetchMeetings, type Mode, type Viewer, type ViewNote } from './api'
 import { CompareMode } from './CompareMode'
 import { CompareViewer } from './CompareViewer'
 import { Dashboard } from './Dashboard'
 import { GraphTab } from './GraphTab'
 import { LiveTab } from './LiveTab'
 import { MeetingPage } from './MeetingPage'
+import { WikiLink } from './WikiLink'
 import { MeetingsTab } from './MeetingsTab'
 import { NoteReader } from './NoteReader'
 import { loadPanelState, savePanelState, type Panel, type PanelState } from './panelWidth'
@@ -16,8 +17,9 @@ import { Resizer } from './Resizer'
 import { MODE_LABEL, Sidebar } from './Sidebar'
 import {
   activate, closeTab, COMPARE_MODE_TAB, COMPARE_VIEWER_TAB, DASHBOARD_TAB, GRAPH_TAB, INITIAL_TABS, noteIdOfTab, openTab,
-  LIVE_TAB, meetingIdOfTab, MEETINGS_TAB, openMeetingTab, syncTabs, type TabState,
+  LIVE_TAB, meetingIdOfTab, MEETINGS_TAB, navigateTo, openMeetingTab, syncTabs, wantsNewTab, type OpenEvent, type TabState,
 } from './tabs'
+import { backValid, canBack, canForward, EMPTY_HISTORY, forwardValid, push, type History } from './history'
 import { useView } from './useView'
 
 export function Workspace({
@@ -99,16 +101,68 @@ export function Workspace({
     setGraphSelected((id) => (id !== null && ids.has(id) ? id : null))
   }, [notes])
 
-  const openNote = (noteId: string) => {
-    setTabs((state) => openTab(state, noteId))
+  // 사용자 요청 2026-10-23 : 링크 이동을 옵시디언처럼 ( 같은 탭 이동 · Ctrl+클릭 새 탭 · 뒤로 / 앞으로 · 미리보기 ). 링크는 에이전트가 만든 것만 그린다 - 본문 글자에 링크를 새로 걸지 않는다 ( 지침 3절 20 )
+  // 노트를 여는 모든 곳이 이 함수를 쓴다 - Ctrl · Cmd · 가운데 버튼이면 새 탭, 아니면 활성 노트 탭 자리에서 이동한다
+  const openNote = (noteId: string, ev?: OpenEvent) => {
+    setTabs((state) => navigateTo(state, noteId, { newTab: wantsNewTab(ev) }))
     setGraphSelected(noteId)
   }
   // 모드 비교 표에서 노트를 누르면 그 노트가 나온 모드로 바꾸고 노트 탭을 연다
-  const openNoteInMode = (nextMode: Mode, noteId: string) => {
+  const openNoteInMode = (nextMode: Mode, noteId: string, ev?: OpenEvent) => {
     setMode(nextMode)
-    openNote(noteId)
+    openNote(noteId, ev)
   }
   const activeNoteId = noteIdOfTab(tabs.active)
+  const notesById = useMemo(() => new Map((notes ?? []).map((n) => [n.note_id, n])), [notes])
+
+  // 방문 기록 : 활성 탭이 바뀔 때마다 쌓고, 뒤로 · 앞으로로 바뀐 경우는 쌓지 않는다
+  const [history, setHistory] = useState<History>(EMPTY_HISTORY)
+  const navigating = useRef<string | null>(null)
+  useEffect(() => {
+    if (navigating.current === tabs.active) {
+      navigating.current = null
+      return
+    }
+    setHistory((h) => push(h, tabs.active))
+  }, [tabs.active])
+  // 고정 탭이거나 지금 보기에 있는 노트이거나 회의 탭이면 갈 수 있다
+  const isValidTab = (key: string) => {
+    const noteId = noteIdOfTab(key)
+    return noteId === null || notesById.has(noteId)
+  }
+  const goHistory = (next: History) => {
+    if (next === history) return
+    const key = next.stack[next.index]
+    if (key !== tabs.active) navigating.current = key
+    setHistory(next)
+    // 닫힌 탭은 다시 연다
+    setTabs((state) => {
+      if (state.tabs.includes(key)) return activate(state, key)
+      const noteId = noteIdOfTab(key)
+      if (noteId !== null) return openTab(state, noteId)
+      const meetingId = meetingIdOfTab(key)
+      return meetingId !== null ? openMeetingTab(state, meetingId) : state
+    })
+  }
+  const goBack = () => goHistory(backValid(history, isValidTab))
+  const goForward = () => goHistory(forwardValid(history, isValidTab))
+  const goBackRef = useRef(goBack)
+  const goForwardRef = useRef(goForward)
+  goBackRef.current = goBack
+  goForwardRef.current = goForward
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return
+      const target = event.target as HTMLElement | null
+      // 입력 중에는 글자 이동에 쓰이므로 가로채지 않는다
+      if (target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable)) return
+      event.preventDefault()
+      if (event.key === 'ArrowLeft') goBackRef.current()
+      else goForwardRef.current()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
   const activeNote = notes?.find((n) => n.note_id === activeNoteId) ?? null
 
   const center = () => {
@@ -168,7 +222,7 @@ export function Workspace({
       )
     }
     return activeNote ? (
-      <NoteReader note={activeNote} titles={titles} showNames={showNames} onOpenNote={openNote} />
+      <NoteReader note={activeNote} notesById={notesById} showNames={showNames} onOpenNote={openNote} />
     ) : (
       <div className="notice">이 보기에 없는 노트</div>
     )
@@ -240,6 +294,14 @@ export function Workspace({
       />
       <main className="center">
         <div className="tabbar">
+          <div className="tab-nav">
+            <button aria-label="뒤로" disabled={!canBack(history)} onClick={goBack}>
+              ←
+            </button>
+            <button aria-label="앞으로" disabled={!canForward(history)} onClick={goForward}>
+              →
+            </button>
+          </div>
           {tabs.tabs.map((key) => (
             <div key={key} className={key === tabs.active ? 'tab on' : 'tab'}>
               <button className="tab-name" onClick={() => setTabs((s) => activate(s, key))}>
@@ -271,9 +333,9 @@ export function Workspace({
           <>
             <p className="muted">{activeNote.title}</p>
             <h4>상향 링크</h4>
-            <LinkList ids={activeNote.upward_links} titles={titles} onOpenNote={openNote} />
+            <LinkList ids={activeNote.upward_links} notesById={notesById} onOpenNote={openNote} />
             <h4>열린 하향 조건부 링크</h4>
-            <LinkList ids={activeNote.opened_downward_links} titles={titles} onOpenNote={openNote} />
+            <LinkList ids={activeNote.opened_downward_links} notesById={notesById} onOpenNote={openNote} />
           </>
         ) : current.data ? (
           <>
@@ -316,15 +378,21 @@ export function Workspace({
   )
 }
 
-function LinkList({ ids, titles, onOpenNote }: { ids: string[]; titles: Map<string, string>; onOpenNote: (id: string) => void }) {
+function LinkList({
+  ids,
+  notesById,
+  onOpenNote,
+}: {
+  ids: string[]
+  notesById: Map<string, ViewNote>
+  onOpenNote: (id: string, ev?: OpenEvent) => void
+}) {
   if (ids.length === 0) return <p className="muted">없음</p>
   return (
     <ul className="links">
       {ids.map((id) => (
         <li key={id}>
-          <button className="link" onClick={() => onOpenNote(id)}>
-            {titles.get(id) ?? id}
-          </button>
+          <WikiLink noteId={id} notesById={notesById} onOpenNote={onOpenNote} />
         </li>
       ))}
     </ul>

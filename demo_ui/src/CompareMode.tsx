@@ -5,6 +5,7 @@ import type { Mode, ViewNote, ViewResponse } from './api'
 import { LAYER_COLOR } from './colors'
 import { findMarkers, MARKER_KIND_LABEL, MARKERS, type MarkerKind } from './markers'
 import { MODE_LABEL } from './Sidebar'
+import type { OpenEvent } from './tabs'
 
 type ModeView = { data: ViewResponse | null; error: string | null }
 const MODES = Object.keys(MODE_LABEL) as Mode[]
@@ -19,7 +20,7 @@ export function CompareMode({
 }: {
   views: Record<Mode, ModeView>
   showNames: boolean
-  onOpenNoteInMode: (mode: Mode, noteId: string) => void
+  onOpenNoteInMode: (mode: Mode, noteId: string, ev?: OpenEvent) => void
 }) {
   // 표지 판정은 모드별로 응답 노트의 제목과 본문에서 찾는다 - 본문이 가려진 실행에서는 하지 않는다
   const hits = useMemo(() => {
@@ -97,7 +98,11 @@ export function CompareMode({
                     {list.length === 0 && <span className="muted">나온 노트 없음</span>}
                     {list.map((hit) => (
                       <div key={hit.note.note_id} className="mk-item">
-                        <button className="link" onClick={() => onOpenNoteInMode(mode, hit.note.note_id)}>
+                        <button
+                          className="link"
+                          onClick={(e) => onOpenNoteInMode(mode, hit.note.note_id, e)}
+                          onAuxClick={(e) => e.button === 1 && onOpenNoteInMode(mode, hit.note.note_id, e)}
+                        >
                           {hit.note.title}
                         </button>
                         <span className="muted">

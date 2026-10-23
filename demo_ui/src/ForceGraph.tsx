@@ -14,6 +14,7 @@ import { DOWNWARD_COLOR, LAYER_COLOR, UPWARD_COLOR } from './colors'
 import { buildEdges, filterEdges, type LinkEdge } from './edges'
 import { graphNodes, keepPositions, layerY, neighbors, type GNode } from './forceGraph'
 import { BANDS } from './layout'
+import type { OpenEvent } from './tabs'
 
 type SimNode = GNode & SimulationNodeDatum
 type SimLink = SimulationLinkDatum<SimNode> & { edge: LinkEdge }
@@ -43,7 +44,7 @@ export function ForceGraph({
   showSameLayer: boolean
   onToggleSameLayer: (value: boolean) => void
   selectedId: string | null
-  onOpenNote: (noteId: string) => void
+  onOpenNote: (noteId: string, ev?: OpenEvent) => void
 }) {
   const [layerPull, setLayerPull] = useState(true)
   const [distance, setDistance] = useState(90)
@@ -232,7 +233,7 @@ export function ForceGraph({
         d.fy = null
         const end = clientPoint(event.sourceEvent as MouseEvent | TouchEvent)
         const start = dragOrigin.current
-        if (start && Math.hypot(end.x - start.x, end.y - start.y) < CLICK_PX) onOpenRef.current(d.id)
+        if (start && Math.hypot(end.x - start.x, end.y - start.y) < CLICK_PX) onOpenRef.current(d.id, event.sourceEvent as OpenEvent)
       })
     nodeSel.call(dragBehavior)
     nodeSel

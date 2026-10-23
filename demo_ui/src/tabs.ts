@@ -64,3 +64,19 @@ export function syncTabs(state: TabState, noteIds: Set<string>): TabState {
   if (tabs.length === state.tabs.length) return state
   return { tabs, active: tabs.includes(state.active) ? state.active : DASHBOARD_TAB }
 }
+
+// 사용자 요청 2026-10-23 : 링크 이동을 옵시디언처럼 ( 같은 탭 이동 · Ctrl+클릭 새 탭 · 뒤로 / 앞으로 · 미리보기 ). 링크는 에이전트가 만든 것만 그린다 - 본문 글자에 링크를 새로 걸지 않는다 ( 지침 3절 20 )
+// 노트를 여는 클릭 이벤트의 필요한 부분만 - Ctrl · Cmd · 가운데 버튼이면 새 탭이다
+export type OpenEvent = { ctrlKey?: boolean; metaKey?: boolean; button?: number }
+
+export function wantsNewTab(ev?: OpenEvent): boolean {
+  return !!ev && (!!ev.ctrlKey || !!ev.metaKey || ev.button === 1)
+}
+
+// 이미 열린 탭이면 그 탭이 활성이 된다. 아니면 새 탭을 강제했거나 활성 탭이 노트 탭이 아닐 때 새 탭을 열고, 활성 노트 탭이면 그 자리를 대상 노트 탭으로 바꾼다 ( 순서 유지 )
+export function navigateTo(state: TabState, noteId: string, opts: { newTab: boolean }): TabState {
+  const key = noteTabKey(noteId)
+  if (state.tabs.includes(key)) return { ...state, active: key }
+  if (opts.newTab || noteIdOfTab(state.active) === null) return openTab(state, noteId)
+  return { tabs: state.tabs.map((tab) => (tab === state.active ? key : tab)), active: key }
+}

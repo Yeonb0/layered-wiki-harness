@@ -11,7 +11,9 @@ import { MeetingForm, MEETING_STATUS_LABEL } from './MeetingForm'
 import { MinutesPanel } from './MinutesPanel'
 import { formatAt, formatRange, isOverdue, localToday, workspaceLabel } from './meetingsView'
 import { Toggle } from './Toggle'
+import type { OpenEvent } from './tabs'
 import { TracePanel } from './TracePanel'
+import { WikiLink } from './WikiLink'
 
 const TASK_STATUS_LABEL: Record<TaskStatus, string> = { todo: '할 일', doing: '진행 중', done: '완료' }
 export const MEETINGS_OFF = '시연 API 를 --meetings-file 로 띄우면 보인다'
@@ -153,7 +155,7 @@ export function MeetingPage({
   meetingId: string
   // 지금 보기 ( 서버가 거른 노트 ) - 아직 못 받았으면 null
   view: ViewResponse | null
-  onOpenNote: (noteId: string) => void
+  onOpenNote: (noteId: string, ev?: OpenEvent) => void
   // 회의가 바뀌면 탭 제목 · 목록을 다시 불러오게 알린다
   onChanged: () => void
   // Workspace 의 모드를 바꾼다 - 회의 탭은 그대로 둔다
@@ -190,6 +192,7 @@ export function MeetingPage({
   if (error) return <div className="notice error">{error}</div>
   if (!meeting) return <div className="notice">불러오는 중</div>
 
+  const notesById = new Map((view?.notes ?? []).map((n) => [n.note_id, n]))
   const minutesNotes = meeting.minutes_doc_id && view ? view.notes.filter((n) => n.source_doc_id === meeting.minutes_doc_id) : []
   const layers = ['전사', '팀', '개인'].filter((layer) => minutesNotes.some((n) => n.layer === layer))
 
@@ -263,9 +266,7 @@ export function MeetingPage({
                     .filter((n) => n.layer === layer)
                     .map((n) => (
                       <li key={n.note_id}>
-                        <button className="link" onClick={() => onOpenNote(n.note_id)}>
-                          {n.title}
-                        </button>
+                        <WikiLink noteId={n.note_id} notesById={notesById} onOpenNote={onOpenNote} />
                         {n.source_doc_id.startsWith('901') && <span className="badge minutes-source">회의록 투입</span>}
                       </li>
                     ))}

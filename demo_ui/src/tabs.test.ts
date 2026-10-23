@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   activate, closeTab, COMPARE_MODE_TAB, COMPARE_VIEWER_TAB, DASHBOARD_TAB, GRAPH_TAB, INITIAL_TABS, LIVE_TAB, MEETINGS_TAB, meetingIdOfTab, meetingTabKey, noteTabKey, openMeetingTab, openTab,
-  syncTabs,
+  navigateTo, syncTabs, wantsNewTab,
 } from './tabs'
 
 const FIXED = [DASHBOARD_TAB, GRAPH_TAB, MEETINGS_TAB, COMPARE_VIEWER_TAB, COMPARE_MODE_TAB, LIVE_TAB]
@@ -77,5 +77,53 @@ describe('회의 탭', () => {
   it('노트 보기가 바뀌어도 회의 탭은 남는다', () => {
     const once = openMeetingTab(INITIAL_TABS, 'm0001')
     expect(syncTabs(once, new Set()).tabs).toContain(meetingTabKey('m0001'))
+  })
+})
+
+describe('navigateTo', () => {
+  const open = (...ids: string[]) => ids.reduce((state, id) => openTab(state, id), INITIAL_TABS)
+
+  it('이미 열린 탭이면 그 탭이 활성이 되고 탭은 늘지 않는다', () => {
+    const state = activate(open('노트1', '노트2'), noteTabKey('노트1'))
+    const next = navigateTo(state, '노트2', { newTab: false })
+    expect(next.tabs).toEqual(state.tabs)
+    expect(next.active).toBe(noteTabKey('노트2'))
+  })
+
+  it('활성 노트 탭에서는 그 자리를 대상 노트 탭으로 바꾼다 ( 순서 유지 )', () => {
+    const state = activate(open('노트1', '노트2', '노트3'), noteTabKey('노트2'))
+    const next = navigateTo(state, '노트4', { newTab: false })
+    expect(next.tabs).toEqual([...FIXED, noteTabKey('노트1'), noteTabKey('노트4'), noteTabKey('노트3')])
+    expect(next.active).toBe(noteTabKey('노트4'))
+  })
+
+  it('고정 탭이 활성이면 새 탭을 연다', () => {
+    const next = navigateTo(INITIAL_TABS, '노트1', { newTab: false })
+    expect(next.tabs).toEqual([...FIXED, noteTabKey('노트1')])
+    expect(next.active).toBe(noteTabKey('노트1'))
+  })
+
+  it('newTab 이면 활성 노트 탭이 있어도 새 탭을 연다', () => {
+    const state = open('노트1')
+    const next = navigateTo(state, '노트2', { newTab: true })
+    expect(next.tabs).toEqual([...FIXED, noteTabKey('노트1'), noteTabKey('노트2')])
+    expect(next.active).toBe(noteTabKey('노트2'))
+  })
+
+  it('회의 탭이 활성이면 새 탭을 연다 ( 회의 탭은 바꾸지 않는다 )', () => {
+    const state = openMeetingTab(INITIAL_TABS, 'm0001')
+    const next = navigateTo(state, '노트1', { newTab: false })
+    expect(next.tabs).toEqual([...FIXED, meetingTabKey('m0001'), noteTabKey('노트1')])
+    expect(next.active).toBe(noteTabKey('노트1'))
+  })
+})
+
+describe('wantsNewTab', () => {
+  it('Ctrl · Cmd · 가운데 버튼이면 새 탭이다', () => {
+    expect(wantsNewTab({ ctrlKey: true })).toBe(true)
+    expect(wantsNewTab({ metaKey: true })).toBe(true)
+    expect(wantsNewTab({ button: 1 })).toBe(true)
+    expect(wantsNewTab({ button: 0 })).toBe(false)
+    expect(wantsNewTab(undefined)).toBe(false)
   })
 })

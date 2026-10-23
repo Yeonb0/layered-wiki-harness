@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import type { Mode, Viewer, ViewNote } from './api'
 import { LAYER_COLOR } from './colors'
 import { buildTree } from './tree'
+import type { OpenEvent } from './tabs'
 
 export const MODE_LABEL: Record<Mode, string> = { all_layers: '전 층 열람', split_by_layer: '층별 분리' }
 
@@ -19,7 +20,7 @@ export function Sidebar({
   onMode: (mode: Mode) => void
   notes: ViewNote[] | null
   activeNoteId: string | null
-  onOpenNote: (noteId: string) => void
+  onOpenNote: (noteId: string, ev?: OpenEvent) => void
 }) {
   const tree = useMemo(() => (notes ? buildTree(notes) : null), [notes])
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -43,7 +44,8 @@ export function Sidebar({
       className={note.note_id === activeNoteId ? 'file on' : 'file'}
       style={{ paddingLeft: 8 + depth * 14 }}
       title={note.title}
-      onClick={() => onOpenNote(note.note_id)}
+      onClick={(e) => onOpenNote(note.note_id, e)}
+      onAuxClick={(e) => e.button === 1 && onOpenNote(note.note_id, e)}
     >
       {note.title}
     </button>

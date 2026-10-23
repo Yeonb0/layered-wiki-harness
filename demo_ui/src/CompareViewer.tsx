@@ -6,6 +6,7 @@ import { compareViews } from './compare'
 import { BANDS } from './layout'
 import { MODE_LABEL } from './Sidebar'
 import { useView } from './useView'
+import type { OpenEvent } from './tabs'
 
 function Column({
   title,
@@ -14,7 +15,7 @@ function Column({
 }: {
   title: string
   notes: ViewNote[]
-  onOpen: ((noteId: string) => void) | null
+  onOpen: ((noteId: string, ev?: OpenEvent) => void) | null
 }) {
   return (
     <section className="cmp-col">
@@ -35,7 +36,7 @@ function Column({
               {inLayer.map((note) => (
                 <li key={note.note_id}>
                   {onOpen ? (
-                    <button className="link" onClick={() => onOpen(note.note_id)}>
+                    <button className="link" onClick={(e) => onOpen(note.note_id, e)} onAuxClick={(e) => e.button === 1 && onOpen(note.note_id, e)}>
                       {note.title}
                       {note.group_label ? ` ( ${note.group_label} )` : ''}
                     </button>
@@ -70,7 +71,7 @@ export function CompareViewer({
   viewA: ViewResponse | null
   // 라이브 겹침이 이 모드에 걸려 있으면 B 의 보기에도 같은 작업을 겹친다
   jobId: string | null
-  onOpenNote: (noteId: string) => void
+  onOpenNote: (noteId: string, ev?: OpenEvent) => void
 }) {
   const [bId, setBId] = useState<string | null>(null)
   const b = useView(mode, bId, jobId)

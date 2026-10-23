@@ -1691,3 +1691,66 @@ body.resizing {
   padding-top: 8px;
   border-top: 1px solid var(--line);
 }
+
+/* 사용자 요청 2026-10-23 : 링크 이동을 옵시디언처럼 ( 같은 탭 이동 · Ctrl+클릭 새 탭 · 뒤로 / 앞으로 · 미리보기 ) - 뒤로 / 앞으로 버튼 · 링크 미리보기 창 ( 다크 모드 ) */
+.tab-nav {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border-right: 1px solid var(--line);
+}
+
+.tab-nav button {
+  padding: 2px 8px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.tab-nav button:disabled {
+  color: #555;
+  cursor: default;
+}
+
+.tab-nav button:not(:disabled):hover {
+  background: #2a2a2a;
+}
+
+.wikilink.missing {
+  color: var(--muted);
+}
+
+.link-preview {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: max-content;
+  max-width: 360px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: 6px;
+  background: #202020;
+  color: var(--text);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.link-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.link-preview-body {
+  margin: 0;
+  color: #c8c8c8;
+  white-space: pre-wrap;
+  word-break: keep-all;
+}
