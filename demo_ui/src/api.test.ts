@@ -3,6 +3,7 @@ import {
   addProgress, ApiError, createMeeting, createTask, fetchDocs, fetchHealth, fetchJob, fetchLive, fetchMeetings, fetchTasks, fetchView,
   decideProposal, fetchProposal, fetchProposals, fetchTrace, fetchViewers, fetchWorkspaces, postLive, submitMinutes, updateMeeting, updateTask,
 } from './api'
+import { confirmMeetingDoc, confirmTask, discardTask, fetchAssignStatus, fetchMeetingDocs, requestAssign } from './api'
 
 // 픽스처일 뿐이며 규칙과 무관하다 - fetch 를 가짜로 바꿔 URL 만 확인한다
 function fakeFetch(body: unknown = {}) {
@@ -212,5 +213,47 @@ describe('회의록 api', () => {
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).message).toBe('합성 충돌 메시지')
     expect((error as ApiError).errorType).toBe('MinutesAlreadyLinked')
+  })
+})
+
+describe('할 일 배정 api', () => {
+  it('조회는 viewer · meeting 쿼리를 URLSearchParams 로 만든다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    const calls = fakeRequests(200, { documents: [] })
+    await fetchAssignStatus('개인:샘플가', 'm0007')
+    await fetchMeetingDocs('개인:샘플가')
+    await fetchMeetingDocs('개인:샘플가', 'm0007')
+    const urls = calls.map((call) => new URL(call.url))
+    expect(urls.map((url) => url.pathname)).toEqual(['/meetings/m0007/assign', '/meeting-docs', '/meeting-docs'])
+    expect(urls.every((url) => url.searchParams.get('viewer') === '개인:샘플가')).toBe(true)
+    expect(urls[1].searchParams.has('meeting')).toBe(false)
+    expect(urls[2].searchParams.get('meeting')).toBe('m0007')
+    expect(calls[0].url).not.toContain('샘플')
+  })
+
+  it('요청 · 확정 · 버리기는 viewer 만 본문에 넣어 POST 한다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    const calls = fakeRequests()
+    await requestAssign('개인:샘플가', 'm0007')
+    await confirmMeetingDoc('개인:샘플가', 'd0001')
+    await confirmTask('개인:샘플가', 't0009')
+    await discardTask('개인:샘플가', 't0010')
+    expect(calls.map((call) => [call.init?.method, new URL(call.url).pathname])).toEqual([
+      ['POST', '/meetings/m0007/assign'],
+      ['POST', '/meeting-docs/d0001/confirm'],
+      ['POST', '/tasks/t0009/confirm'],
+      ['POST', '/tasks/t0010/discard'],
+    ])
+    expect(calls.every((call) => JSON.parse(call.init?.body as string).viewer === '개인:샘플가')).toBe(true)
+    expect(Object.keys(JSON.parse(calls[0].init?.body as string))).toEqual(['viewer'])
+  })
+
+  it('409 이면 서버 message 를 담은 오류를 던진다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    fakeRequests(409, { ok: false, error_type: 'AssignPending', message: '합성 대기 메시지' })
+    const error = await requestAssign('전사', 'm0007').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).message).toBe('합성 대기 메시지')
+    expect((error as ApiError).errorType).toBe('AssignPending')
   })
 })

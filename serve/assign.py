@@ -77,9 +77,17 @@ def build_messages(meeting: dict, raw_text: str, attendees: list) -> list:
   return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": User}]
 
 
-def _date_forms(due: str) -> list:
+def due_in_minutes(due: str, raw_text: str, starts_at: str) -> bool:
+  # 기한은 회의록에 적힌 날짜만 - 숫자 경계에서만 맞추고, 연도 없는 형태로 맞으면 회의 연도와 같아야 한다 ( 11월 3일 안의 1월 3일 · 연도 지어내기 막기 )
   Day = datetime.strptime(due, "%Y-%m-%d")
-  return [due, f"{Day.month:02d}-{Day.day:02d}", f"{Day.month}월 {Day.day}일"]
+  if re.search(rf"(?<!\d){re.escape(due)}(?!\d)", raw_text):
+    return True
+  if Day.year != int(starts_at[:4]):
+    return False
+  # MM-DD 는 다른 날짜 ( YYYY-MM-DD ) 의 끝부분이 아니어야 한다
+  Short = rf"(?<!\d)(?<!\d-){Day.month:02d}-{Day.day:02d}(?!\d)"
+  Korean = rf"(?<!\d){Day.month}월 {Day.day}일"
+  return bool(re.search(Short, raw_text) or re.search(Korean, raw_text))
 
 
 def _task_shape_ok(task) -> bool:
@@ -137,13 +145,13 @@ def run_assign(meeting: dict, minutes_doc: dict, chat_fn, model_id: str, seed: i
           Task["due"] = ""
         else:
           try:
-            Forms = _date_forms(Due)
+            Found = due_in_minutes(Due, RawText, meeting["starts_at"])
           except ValueError:
             Problems.append({"task_title": Task["title"], "problem": "due_bad_format", "given": Due})
             Task["due"] = ""
           else:
-            # 회의록에 그 날짜가 어떤 형태로도 없으면 기한만 비우고 할 일은 남긴다
-            if not any(Form in RawText for Form in Forms):
+            # 회의록에 그 날짜가 맞는 형태로 없으면 기한만 비우고 할 일은 남긴다
+            if not Found:
               Problems.append({"task_title": Task["title"], "problem": "due_not_in_minutes", "given": Due})
               Task["due"] = ""
       Ok.append(Task)

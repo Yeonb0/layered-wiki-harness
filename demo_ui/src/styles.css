@@ -1754,3 +1754,54 @@ body.resizing {
   white-space: pre-wrap;
   word-break: keep-all;
 }
+
+/* 사용자 결정 2026-10-23 ( 지침 v3.1 · 3절 27 ) : 할 일 배정 - 회의 문서 카드 · 담당자 묶음 · 근거 인용 블록 ( 다크 모드 ) */
+.doc-card {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.doc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.doc-card h4 {
+  margin: 14px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.assignee-group {
+  margin: 10px 0;
+}
+
+.assignee-group h5 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.assign-task {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--line);
+  background: #202020;
+}
+
+blockquote.evidence {
+  margin: 6px 0;
+  padding: 4px 10px;
+  border-left: 3px solid #a88bfa;
+  color: #c8c8c8;
+  font-size: 13px;
+  word-break: keep-all;
+}
+
+.doc-actions {
+  margin-top: 12px;
+}

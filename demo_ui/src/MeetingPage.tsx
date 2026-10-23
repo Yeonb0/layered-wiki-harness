@@ -8,6 +8,7 @@ import {
 } from './api'
 import { LAYER_COLOR } from './colors'
 import { MeetingForm, MEETING_STATUS_LABEL } from './MeetingForm'
+import { AssignPanel } from './AssignPanel'
 import { MinutesPanel } from './MinutesPanel'
 import { formatAt, formatRange, isOverdue, localToday, workspaceLabel } from './meetingsView'
 import { Toggle } from './Toggle'
@@ -246,6 +247,7 @@ export function MeetingPage({
         )}
       </Toggle>
       <MinutesPanel viewer={viewer} meeting={meeting} defaultMode={mode} onReloadMeeting={reload} onViewInVault={onViewInVault} />
+      <AssignPanel viewer={viewer} meeting={meeting} onTasksChanged={reload} />
       <Toggle title="회의록에서 나온 노트">
         {!meeting.minutes_doc_id ? (
           <p className="muted">연결된 회의록 없음</p>

@@ -165,6 +165,8 @@ class MeetingStore:
         # source 는 API 로 만들 때만 사람으로 제한한다 - 시작 때는 agent_proposal · agent_confirmed 도 받는다 ( API 는 만들 수 없지만 파일에는 있을 수 있다 )
         self._check_task_fields({key: row[key] for key in ("title", "workspace", "assignee", "due", "status", "source")})
         self._check_progress(row["progress"])
+        if "evidence" in row and (not isinstance(row["evidence"], str) or not 1 <= len(row["evidence"]) <= 300):
+          raise ValueError("evidence 는 1 ~ 300자 문자열이어야 한다")
       except ValueError as Error:
         raise ValueError(f"회의 파일의 할 일 {row['task_id']} 가 규칙에 맞지 않는다: {Error}") from None
       meeting_id = row["meeting_id"]
@@ -273,7 +275,11 @@ class MeetingStore:
     return {key: row.get(key) for key in _MEETING_KEYS + ("created_by", "updated_at")}
 
   def _task_row(self, row: dict) -> dict:
-    return {key: row.get(key) for key in _TASK_KEYS}
+    out = {key: row.get(key) for key in _TASK_KEYS}
+    # evidence 는 에이전트가 만든 할 일에만 있는 선택 키다 - 사람이 만든 할 일에는 키가 없다
+    if "evidence" in row:
+      out["evidence"] = row["evidence"]
+    return out
 
   def _visible_meeting(self, target, meeting_id: str) -> dict:
     for row in self.data["meetings"]:
@@ -447,9 +453,11 @@ class MeetingStore:
       parsed = result["parsed"]
       # 모두 검사를 통과한 뒤에만 쓴다 - 일부만 들어간 제안을 남기지 않는다
       created = []
-      for checked in checked_rows:
+      for item, checked in zip(result["tasks_ok"], checked_rows):
         row = {"task_id": self._next_id(self.data["tasks"], "task_id", "t"), "meeting_id": meeting_id, **checked, "progress": []}
         row = {key: row[key] for key in _TASK_KEYS}
+        # 에이전트가 근거로 옮긴 회의록 문장 - API 로는 받지 않는다 ( 사람이 근거를 꾸미지 않게 )
+        row["evidence"] = item["evidence"]
         self.data["tasks"].append(row)
         created.append(row)
       document = {

@@ -216,6 +216,8 @@ export type Task = {
   status: TaskStatus
   source: TaskSource
   progress: ProgressEntry[]
+  // 에이전트가 만든 할 일에만 있다 - 근거로 옮긴 회의록 문장 ( 사람이 만든 할 일에는 키가 없다 )
+  evidence?: string
 }
 
 // 400 · 404 · 503 의 본문 ( error_type · message ) 을 담는다 - 화면은 message 를 그대로 보인다
@@ -398,4 +400,53 @@ export function decideProposal(
   decisions: { note_index: number; decision: 'approve' | 'reject' }[],
 ): Promise<{ ok: true; doc_id: string; status: ProposalStatus; approved: number; rejected: number; pending: number }> {
   return meetingsRequest('POST', `/proposals/${docId}/decide`, { viewer, decisions })
+}
+
+// 사용자 결정 2026-10-23 ( 지침 v3.1 · 3절 27 ) : 할 일 배정은 회의록 승인 뒤 버튼으로 도는 별도 역할. 결과는 에이전트 제안으로 표시하고 사람이 확정 / 버린다. 확정 뒤 팀원이 진행 기록을 덧붙인다
+// 아래 타입의 키는 serve/meetings.py 의 회의 문서 레코드와 serve/demo_api.py 의 _assign_status 응답 그대로다
+export type MeetingDoc = {
+  doc_id: string
+  meeting_id: string
+  workspace: Workspace
+  decisions: string[]
+  summary: string
+  task_ids: string[]
+  status: 'proposal' | 'confirmed'
+  assign_id: string
+  created_at: string
+  confirmed_by: string | null
+  confirmed_at: string | null
+}
+
+export type AssignStatus = {
+  assign_id: string
+  status: 'running' | 'done' | 'failed'
+  error: string | null
+  tasks_dropped: number
+  dropped: { title: string | null; reason: string }[]
+  problems: { task_title: string; problem: string; given: string }[]
+}
+
+export function requestAssign(viewer: string, meetingId: string): Promise<{ ok: true; assign_id: string }> {
+  return meetingsRequest('POST', `/meetings/${meetingId}/assign`, { viewer })
+}
+
+export function fetchAssignStatus(viewer: string, meetingId: string): Promise<AssignStatus> {
+  return meetingsRequest<AssignStatus>('GET', withQuery(`/meetings/${meetingId}/assign`, { viewer }))
+}
+
+export async function fetchMeetingDocs(viewer: string, meeting?: string): Promise<MeetingDoc[]> {
+  return (await meetingsRequest<{ documents: MeetingDoc[] }>('GET', withQuery('/meeting-docs', { viewer, meeting }))).documents
+}
+
+export function confirmMeetingDoc(viewer: string, docId: string): Promise<MeetingDoc> {
+  return meetingsRequest<MeetingDoc>('POST', `/meeting-docs/${docId}/confirm`, { viewer })
+}
+
+export function confirmTask(viewer: string, taskId: string): Promise<Task> {
+  return meetingsRequest<Task>('POST', `/tasks/${taskId}/confirm`, { viewer })
+}
+
+export function discardTask(viewer: string, taskId: string): Promise<{ ok: true; task_id: string }> {
+  return meetingsRequest('POST', `/tasks/${taskId}/discard`, { viewer })
 }

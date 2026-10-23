@@ -123,6 +123,46 @@ class RoleTest(unittest.TestCase):
       self.assertIsInstance(Caught.exception, ValueError)
 
 
+class DueBoundaryTest(unittest.TestCase):
+  def due_after(self, Text, Due, Starts="2026-10-20T10:00"):
+    Output = copy.deepcopy(_GOOD)
+    Output["tasks"][0]["due"] = Due
+    Chat, _ = _stub(Output)
+    Meeting = {**_MEETING, "starts_at": Starts}
+    Result = run_assign(Meeting, {"raw_text": Text}, Chat, "합성모델", 7, 9)
+    return Result["tasks_ok"][0]["due"], Result["problems"]
+
+  def test_month_day_inside_a_longer_month_is_not_a_match(self) -> None:
+    # 11월 3일 안에 1월 3일이 들어 있어도 1월 3일이 적힌 것은 아니다
+    Text = _TEXT.replace("10월 31일", "11월 3일")
+    Due, Problems = self.due_after(Text, "2026-01-03")
+    self.assertEqual(Due, "")
+    self.assertEqual(Problems, [{"task_title": "합성 표 정리", "problem": "due_not_in_minutes", "given": "2026-01-03"}])
+    self.assertEqual(self.due_after(Text, "2026-11-03")[0], "2026-11-03")
+
+  def test_year_less_forms_need_the_meeting_year(self) -> None:
+    self.assertEqual(self.due_after(_TEXT, "2027-10-31")[0], "")
+    self.assertEqual(self.due_after(_TEXT, "2026-10-31")[0], "2026-10-31")
+    self.assertEqual(self.due_after(_TEXT.replace("10월 31일", "10-31"), "2027-10-31")[0], "")
+    # 회의 연도가 2027 이면 같은 글이 2027 기한을 받친다
+    self.assertEqual(self.due_after(_TEXT, "2027-10-31", Starts="2027-10-20T10:00")[0], "2027-10-31")
+
+  def test_full_date_is_kept_in_any_year(self) -> None:
+    Text = _TEXT.replace("10월 31일", "2027-10-31")
+    self.assertEqual(self.due_after(Text, "2027-10-31"), ("2027-10-31", []))
+
+  def test_digits_next_to_the_date_block_the_match(self) -> None:
+    for Written in ("110-31", "10-310", "2026-10-310", "12026-10-31"):
+      Text = _TEXT.replace("10월 31일", Written)
+      Due, _ = self.due_after(Text, "2026-10-31")
+      self.assertEqual(Due, "", Written)
+
+  def test_short_form_inside_another_full_date_is_not_a_match(self) -> None:
+    # 2027-10-31 의 끝부분 10-31 은 2026-10-31 이 적힌 것이 아니다
+    Text = _TEXT.replace("10월 31일", "2027-10-31")
+    self.assertEqual(self.due_after(Text, "2026-10-31")[0], "")
+
+
 class AssignBase(MinutesBase):
   def setUp(self) -> None:
     super().setUp()
@@ -197,6 +237,27 @@ class FlowTest(AssignBase):
     self.assertEqual((Status, Body["progress"][-1]["author"]), (200, "팀원A"))
     # 문서가 확정되면 다시 배정을 요청할 수 있다
     self.run_assign_flow(App)
+
+  def test_agent_tasks_carry_evidence_that_is_in_the_minutes(self) -> None:
+    App = self.app()
+    DocId = self.decided(App)
+    self.run_assign_flow(App)
+    Raw = App.minutes.get(DocId)["raw_text"]
+    Tasks = self.api(App, "GET", "/tasks", "개인:팀원B", meeting="m0007")[1]["tasks"]
+    Agent = [T for T in Tasks if T["source"] == "agent_proposal"]
+    self.assertEqual([T["evidence"] for T in Agent], [Item["evidence"] for Item in _GOOD["tasks"]])
+    self.assertTrue(all(T["evidence"] in Raw for T in Agent))
+    # 사람이 만든 할 일에는 evidence 키가 없다
+    self.assertTrue(all("evidence" not in T for T in Tasks if T["source"] == "human"))
+    # 확정 · 수정을 거쳐도 남는다
+    Confirmed = self.api(App, "POST", f"/tasks/{Agent[0]['task_id']}/confirm", "개인:팀원B")[1]
+    self.assertEqual(Confirmed["evidence"], Agent[0]["evidence"])
+
+  def test_api_rejects_evidence(self) -> None:
+    App = self.app()
+    Status, Body = self.api(App, "POST", "/tasks", "개인:팀원A", title="합성", assignee="팀원A", meeting_id="m0007", evidence="꾸민 근거")
+    self.assertEqual(Status, 400, Body)
+    self.assertEqual(self.api(App, "POST", "/tasks/t0001", "개인:팀원A", evidence="꾸민 근거")[0], 400)
 
   def test_state_survives_restart(self) -> None:
     App = self.app()
@@ -433,6 +494,14 @@ class DocumentFileTest(AssignBase):
     for Name, Change in Cases.items():
       write({**Good, **Change})
       with self.assertRaises(ValueError, msg=Name):
+        MeetingStore(self.File, None, App.membership, App.labels)
+    # 할 일의 evidence 는 있으면 1 ~ 300자 문자열이다
+    for Bad in ("", 3, "가" * 301):
+      Edited = copy.deepcopy(Data)
+      Edited["tasks"][0]["evidence"] = Bad
+      with open(self.File, "w", encoding="utf-8") as File:
+        json.dump(Edited, File, ensure_ascii=False)
+      with self.assertRaises(ValueError, msg=repr(Bad)):
         MeetingStore(self.File, None, App.membership, App.labels)
     # documents 가 없는 파일은 빈 목록으로 읽는다
     with open(self.File, "w", encoding="utf-8") as File:
