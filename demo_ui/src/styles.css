@@ -1157,3 +1157,28 @@ body.resizing {
   cursor: col-resize;
   user-select: none;
 }
+
+/* 사용자 요청 2026-10-23 : 가운데가 좁아져도 배지 · 짧은 칸은 글자 중간에서 끊지 않는다 - 표가 넘치면 가로로 스크롤 */
+.badge,
+.kind,
+.tag,
+.chip-filter,
+.db-tab,
+.bar-mode,
+.bar-num {
+  white-space: nowrap;
+}
+
+.db-table th,
+.db-table td {
+  white-space: nowrap;
+}
+
+.db-table td.db-title {
+  white-space: normal;
+  min-width: 12em;
+}
+
+.db {
+  overflow-x: auto;
+}
