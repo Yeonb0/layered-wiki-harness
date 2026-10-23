@@ -1,11 +1,12 @@
 // 사용자 결정 2026-10-23 : 가운데 탭 상태 - 대시보드 · 그래프는 고정 탭, 노트 탭은 여러 개 열고 닫는다
 export const DASHBOARD_TAB = 'dashboard'
 export const GRAPH_TAB = 'graph'
+export const MEETINGS_TAB = 'meetings'
 export const COMPARE_VIEWER_TAB = 'compare-viewer'
 export const COMPARE_MODE_TAB = 'compare-mode'
 export const LIVE_TAB = 'live'
-// 고정 탭 순서 : 대시보드, 그래프, 보는 사람 비교, 모드 비교, 라이브 투입
-const FIXED_TABS = [DASHBOARD_TAB, GRAPH_TAB, COMPARE_VIEWER_TAB, COMPARE_MODE_TAB, LIVE_TAB]
+// 고정 탭 순서 : 대시보드, 그래프, 회의, 보는 사람 비교, 모드 비교, 라이브 투입
+const FIXED_TABS = [DASHBOARD_TAB, GRAPH_TAB, MEETINGS_TAB, COMPARE_VIEWER_TAB, COMPARE_MODE_TAB, LIVE_TAB]
 
 export type TabState = { tabs: string[]; active: string }
 
@@ -17,6 +18,20 @@ export function noteTabKey(noteId: string): string {
 
 export function noteIdOfTab(key: string): string | null {
   return key.startsWith('note:') ? key.slice('note:'.length) : null
+}
+
+export function meetingTabKey(meetingId: string): string {
+  return `meeting:${meetingId}`
+}
+
+export function meetingIdOfTab(key: string): string | null {
+  return key.startsWith('meeting:') ? key.slice('meeting:'.length) : null
+}
+
+// 같은 회의를 두 번 열면 탭이 늘지 않고 그 탭이 활성이 된다
+export function openMeetingTab(state: TabState, meetingId: string): TabState {
+  const key = meetingTabKey(meetingId)
+  return state.tabs.includes(key) ? { ...state, active: key } : { tabs: [...state.tabs, key], active: key }
 }
 
 // 없는 탭은 활성으로 만들지 않는다

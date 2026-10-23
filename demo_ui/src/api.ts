@@ -178,3 +178,143 @@ export type JobStatus = {
 export function fetchJob(jobId: string): Promise<JobStatus> {
   return getJson<JobStatus>(`/jobs/${jobId}?wait=0`)
 }
+
+// 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능. 회의 · 할 일은 서버가 보는 사람별로 거른 것만 그린다. 보는 사람 선택은 인증이 아니다
+// 아래 타입은 서버 응답 키 그대로다 ( serve/meetings.py 의 _MEETING_KEYS · _TASK_KEYS · list_workspaces )
+export type Workspace = { layer: string; group: string | null }
+
+export type WorkspaceOption = { workspace: Workspace; label: string; members: string[] }
+
+export type MeetingStatus = 'scheduled' | 'done' | 'cancelled'
+export type TaskStatus = 'todo' | 'doing' | 'done'
+export type TaskSource = 'human' | 'agent_proposal' | 'agent_confirmed'
+
+export type Meeting = {
+  meeting_id: string
+  title: string
+  starts_at: string
+  ends_at: string
+  workspace: Workspace
+  attendees: string[]
+  agenda: string[]
+  minutes_doc_id: string | null
+  status: MeetingStatus
+  // 시드 회의에는 없어 null 로 온다
+  created_by: string | null
+  updated_at: string | null
+}
+
+export type ProgressEntry = { at: string; author: string; text: string }
+
+export type Task = {
+  task_id: string
+  meeting_id: string | null
+  title: string
+  workspace: Workspace
+  assignee: string
+  due: string | null
+  status: TaskStatus
+  source: TaskSource
+  progress: ProgressEntry[]
+}
+
+// 400 · 404 · 503 의 본문 ( error_type · message ) 을 담는다 - 화면은 message 를 그대로 보인다
+export class ApiError extends Error {
+  status: number
+  errorType: string
+  constructor(status: number, errorType: string, message: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.errorType = errorType
+  }
+}
+
+async function meetingsRequest<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${apiBase()}${path}`, {
+    method,
+    headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+    body: method === 'POST' ? JSON.stringify(body) : undefined,
+  })
+  if (!response.ok) {
+    let parsed: { error_type?: string; message?: string } = {}
+    try {
+      parsed = (await response.json()) as { error_type?: string; message?: string }
+    } catch {
+      parsed = {}
+    }
+    throw new ApiError(response.status, parsed.error_type ?? 'Unknown', parsed.message ?? `요청 실패 ( ${response.status} ) : ${path.split('?')[0]}`)
+  }
+  return (await response.json()) as T
+}
+
+function withQuery(path: string, params: Record<string, string | undefined>): string {
+  // 한글이 들어 있어 쿼리를 문자열로 이어 붙이지 않는다
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(key, value)
+  }
+  return `${path}?${query.toString()}`
+}
+
+export async function fetchWorkspaces(viewer: string): Promise<WorkspaceOption[]> {
+  return (await meetingsRequest<{ workspaces: WorkspaceOption[] }>('GET', withQuery('/workspaces', { viewer }))).workspaces
+}
+
+export async function fetchMeetings(viewer: string, from?: string, to?: string): Promise<Meeting[]> {
+  return (await meetingsRequest<{ meetings: Meeting[] }>('GET', withQuery('/meetings', { viewer, from, to }))).meetings
+}
+
+export function fetchMeeting(viewer: string, meetingId: string): Promise<Meeting> {
+  return meetingsRequest<Meeting>('GET', withQuery(`/meetings/${meetingId}`, { viewer }))
+}
+
+// 만들기 · 고치기 본문 ( 서버 _MEETING_INPUT ) - 고칠 때는 바꿀 키만 보낸다
+export type MeetingInput = {
+  title: string
+  starts_at: string
+  ends_at: string
+  workspace: Workspace
+  attendees: string[]
+  agenda: string[]
+  minutes_doc_id: string | null
+  status: MeetingStatus
+}
+
+export function createMeeting(viewer: string, fields: Partial<MeetingInput>): Promise<Meeting> {
+  return meetingsRequest<Meeting>('POST', '/meetings', { viewer, ...fields })
+}
+
+export function updateMeeting(viewer: string, meetingId: string, fields: Partial<MeetingInput>): Promise<Meeting> {
+  return meetingsRequest<Meeting>('POST', `/meetings/${meetingId}`, { viewer, ...fields })
+}
+
+export async function fetchTasks(viewer: string, meeting?: string, assignee?: string): Promise<Task[]> {
+  return (await meetingsRequest<{ tasks: Task[] }>('GET', withQuery('/tasks', { viewer, meeting, assignee }))).tasks
+}
+
+// 만들기 본문 ( 서버 _TASK_INPUT ) - 고칠 때는 title · assignee · due · status 만 보낸다
+export type TaskInput = {
+  title: string
+  meeting_id: string | null
+  workspace: Workspace
+  assignee: string
+  due: string | null
+  status: TaskStatus
+}
+
+export function createTask(viewer: string, fields: Partial<TaskInput>): Promise<Task> {
+  return meetingsRequest<Task>('POST', '/tasks', { viewer, ...fields })
+}
+
+export function updateTask(
+  viewer: string,
+  taskId: string,
+  fields: Partial<Pick<TaskInput, 'title' | 'assignee' | 'due' | 'status'>>,
+): Promise<Task> {
+  return meetingsRequest<Task>('POST', `/tasks/${taskId}`, { viewer, ...fields })
+}
+
+export function addProgress(viewer: string, taskId: string, text: string): Promise<Task> {
+  return meetingsRequest<Task>('POST', `/tasks/${taskId}/progress`, { viewer, text })
+}

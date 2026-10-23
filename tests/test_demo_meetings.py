@@ -431,6 +431,41 @@ class LoadCheckTest(MeetingsBase):
     self.assertEqual(self.ids(Body, "tasks", "task_id"), ["t0003", "t0006", "t0005"])
 
 
+class WorkspaceListTest(MeetingsBase):
+  def labels(self, App, Viewer):
+    Status, Body = self.get(App, "/workspaces", Viewer)
+    self.assertEqual(Status, 200)
+    return [Item["label"] for Item in Body["workspaces"]], Body
+
+  def test_workspaces_per_viewer(self) -> None:
+    App = self.app()
+    self.assertEqual(self.labels(App, "개인:팀원A")[0], ["전사", "팀1", "팀원A"])
+    self.assertEqual(self.labels(App, "개인:팀원E")[0], ["전사", "팀1", "팀2", "팀원E"])
+    self.assertEqual(self.labels(App, "팀:팀2")[0], ["전사", "팀2"])
+    self.assertEqual(self.labels(App, "전사")[0], ["전사"])
+
+  def test_members_equal_members_of(self) -> None:
+    App = self.app()
+    for Viewer in ("개인:팀원E", "팀:팀2", "전사"):
+      for Item in self.labels(App, Viewer)[1]["workspaces"]:
+        self.assertEqual(Item["members"], App.meetings.members_of(Item["workspace"]))
+
+  def test_other_team_name_is_not_in_response(self) -> None:
+    App = self.app()
+    # 스파이 : 팀원A 는 팀2 에 속하지 않으므로 응답 문자열에 팀2 가 없다
+    Body = self.labels(App, "개인:팀원A")[1]
+    self.assertNotIn("팀2", json.dumps(Body, ensure_ascii=False))
+
+  def test_workspaces_need_viewer_and_store(self) -> None:
+    App = self.app()
+    self.assertEqual(App.meetings_request("GET", "/workspaces", {}, None)[0], 400)
+    self.assertEqual(self.get(App, "/workspaces", "개인:없음")[0], 400)
+    self.assertEqual(self.get(App, "/workspaces", "전사", extra="1")[0], 400)
+    self.assertEqual(self.post(App, "/workspaces", "전사")[0], 400)
+    Bare = self.app(seeded=False)
+    self.assertEqual(self.get(Bare, "/workspaces", "전사")[0], 503)
+
+
 class HttpTest(MeetingsBase):
   def serve(self, App, Cors=None) -> str:
     Server = make_server(App, "127.0.0.1", 0, cors_origin=Cors)

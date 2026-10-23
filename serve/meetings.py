@@ -208,6 +208,16 @@ class MeetingStore:
       return self.labels[target[1]]
     return f"팀:{target[1]}" if target[0] == "팀" else "전사"
 
+  def list_workspaces(self, target) -> list:
+    # 보는 사람이 볼 수 있는 워크스페이스만 - 전사 → 팀 → 개인 순이고 개인은 can_see 가 본인 것만 남긴다
+    candidates = [{"layer": "전사", "group": None}]
+    candidates += [{"layer": "팀", "group": team} for team in self.teams]
+    candidates += [{"layer": "개인", "group": label} for label in sorted(self.labels.values())]
+    return [
+      {"workspace": ws, "label": ws["group"] or "전사", "members": self.members_of(ws)}
+      for ws in candidates if self.can_see(target, ws)
+    ]
+
   def _now(self) -> str:
     return self.now_fn().strftime("%Y-%m-%dT%H:%M")
 

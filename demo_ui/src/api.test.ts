@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchDocs, fetchHealth, fetchJob, fetchLive, fetchView, fetchViewers, postLive } from './api'
+import {
+  addProgress, ApiError, createMeeting, createTask, fetchDocs, fetchHealth, fetchJob, fetchLive, fetchMeetings, fetchTasks, fetchView,
+  fetchViewers, fetchWorkspaces, postLive, updateMeeting, updateTask,
+} from './api'
 
 // 픽스처일 뿐이며 규칙과 무관하다 - fetch 를 가짜로 바꿔 URL 만 확인한다
 function fakeFetch(body: unknown = {}) {
@@ -110,5 +113,64 @@ describe('api', () => {
     vi.stubEnv('VITE_API_BASE', 'http://api.test')
     vi.stubGlobal('fetch', async () => ({ ok: false, status: 400, json: async () => ({}) }))
     await expect(fetchView('all_layers', '없는보는사람')).rejects.toThrow('400')
+  })
+})
+
+// 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능 - 쿼리 · 본문 만들기와 오류 본문 확인
+function fakeRequests(status = 200, body: unknown = {}) {
+  const calls: { url: string; init?: RequestInit }[] = []
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    calls.push({ url, init })
+    return { ok: status < 400, status, json: async () => body }
+  })
+  return calls
+}
+
+describe('회의 api', () => {
+  it('fetchWorkspaces · fetchMeetings · fetchTasks 는 쿼리를 URLSearchParams 로 만들고 없는 값은 붙이지 않는다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    const calls = fakeRequests(200, { workspaces: [], meetings: [], tasks: [] })
+    await fetchWorkspaces('개인:샘플가')
+    await fetchMeetings('팀:샘플나', '2026-10-01', '2026-10-31')
+    await fetchMeetings('전사')
+    await fetchTasks('개인:샘플가', 'm0001', '샘플가')
+    const urls = calls.map((call) => new URL(call.url))
+    expect(urls[0].pathname).toBe('/workspaces')
+    expect(urls[0].searchParams.get('viewer')).toBe('개인:샘플가')
+    expect(urls[1].searchParams.get('from')).toBe('2026-10-01')
+    expect(urls[1].searchParams.get('to')).toBe('2026-10-31')
+    expect(urls[2].searchParams.has('from')).toBe(false)
+    expect(urls[3].searchParams.get('meeting')).toBe('m0001')
+    expect(urls[3].searchParams.get('assignee')).toBe('샘플가')
+    expect(calls[0].url).not.toContain('샘플')
+  })
+
+  it('만들기 · 고치기 · 진행 기록은 viewer 를 본문에 넣어 POST 한다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    const calls = fakeRequests()
+    await createMeeting('전사', { title: '합성 회의' })
+    await updateMeeting('전사', 'm0001', { status: 'done' })
+    await createTask('개인:샘플가', { title: '합성 할 일', assignee: '샘플가', meeting_id: 'm0001' })
+    await updateTask('개인:샘플가', 't0001', { status: 'doing' })
+    await addProgress('개인:샘플가', 't0001', '합성 기록')
+    expect(calls.map((call) => [call.init?.method, new URL(call.url).pathname])).toEqual([
+      ['POST', '/meetings'],
+      ['POST', '/meetings/m0001'],
+      ['POST', '/tasks'],
+      ['POST', '/tasks/t0001'],
+      ['POST', '/tasks/t0001/progress'],
+    ])
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual({ viewer: '전사', title: '합성 회의' })
+    expect(JSON.parse(calls[4].init?.body as string)).toEqual({ viewer: '개인:샘플가', text: '합성 기록' })
+  })
+
+  it.each([400, 404, 503])('%i 이면 본문의 error_type · message 를 담은 오류를 던진다', async (status) => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    fakeRequests(status, { ok: false, error_type: '합성유형', message: '합성 메시지' })
+    const error = await fetchMeetings('전사').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).message).toBe('합성 메시지')
+    expect((error as ApiError).errorType).toBe('합성유형')
+    expect((error as ApiError).status).toBe(status)
   })
 })

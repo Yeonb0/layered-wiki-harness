@@ -52,6 +52,7 @@ MAX_WAIT_SECONDS = 60
 _JOB_PATH = re.compile(r"/jobs/([0-9a-f]{32})")
 # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능 - 회의 · 할 일은 노트와 같은 층 규칙으로 서버가 거른다
 _MEETING_PATH = re.compile(r"/meetings(?:/([a-z0-9]{1,40}))?")
+_WORKSPACE_PATH = "/workspaces"
 _TASK_PATH = re.compile(r"/tasks(?:/([a-z0-9]{1,40})(/progress)?)?")
 _WAIT_VALUE = re.compile(r"[0-9]+")
 # 본문 읽기에 실패해 이미 응답을 보냈다는 표지
@@ -575,7 +576,8 @@ class DemoApp:
       return 503, {"ok": False, "error_type": "MeetingsNotConfigured", "message": "회의 기능이 설정되지 않았다"}
     Match = _MEETING_PATH.fullmatch(path)
     Task = _TASK_PATH.fullmatch(path)
-    if Match is None and Task is None:
+    Spaces = path == _WORKSPACE_PATH
+    if Match is None and Task is None and not Spaces:
       return 404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"}
     try:
       # 모든 경로에 viewer 가 필수이고 목록에 없는 보는 사람은 400 이다
@@ -598,6 +600,10 @@ class DemoApp:
       if Target is None:
         raise ValueError("viewers 에 없는 viewer 이다")
       Store = self.meetings
+      if Spaces:
+        if method != "GET" or Params:
+          raise ValueError("워크스페이스 목록은 viewer 만 받는 GET 이다")
+        return 200, self._mask({"workspaces": Store.list_workspaces(Target)})
       if Match is not None:
         MeetingId = Match.group(1)
         if method == "GET" and MeetingId is None:
@@ -774,7 +780,7 @@ def make_handler(App: DemoApp, cors_origin=None):
       elif urlsplit(self.path).path == "/live":
         Status, Obj = App.live_status()
         self._send(Status, Obj)
-      elif _MEETING_PATH.fullmatch(urlsplit(self.path).path) or _TASK_PATH.fullmatch(urlsplit(self.path).path):
+      elif _MEETING_PATH.fullmatch(urlsplit(self.path).path) or _TASK_PATH.fullmatch(urlsplit(self.path).path) or urlsplit(self.path).path == _WORKSPACE_PATH:
         Parts = urlsplit(self.path)
         Status, Obj = App.meetings_request("GET", Parts.path, parse_qs(Parts.query, keep_blank_values=True), None)
         self._send(Status, Obj)

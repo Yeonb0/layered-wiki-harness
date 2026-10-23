@@ -2,19 +2,21 @@
 // 사용자 결정 2026-10-23 : 들어오는 링크 ( 백링크 같은 것 ) 는 보여 주지 않는다 - 고정 결정 "백링크 미기록" 과 헷갈리지 않게
 // 사용자 결정 2026-10-21 · 23 : 보는 사람별 거르기는 서버가 하고 화면은 받은 것만 그린다. 보는 사람 선택은 인증이 아니다
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Mode, Viewer } from './api'
+import { fetchMeetings, type Mode, type Viewer } from './api'
 import { CompareMode } from './CompareMode'
 import { CompareViewer } from './CompareViewer'
 import { Dashboard } from './Dashboard'
 import { GraphTab } from './GraphTab'
 import { LiveTab } from './LiveTab'
+import { MeetingPage } from './MeetingPage'
+import { MeetingsTab } from './MeetingsTab'
 import { NoteReader } from './NoteReader'
 import { loadPanelState, savePanelState, type Panel, type PanelState } from './panelWidth'
 import { Resizer } from './Resizer'
 import { MODE_LABEL, Sidebar } from './Sidebar'
 import {
   activate, closeTab, COMPARE_MODE_TAB, COMPARE_VIEWER_TAB, DASHBOARD_TAB, GRAPH_TAB, INITIAL_TABS, noteIdOfTab, openTab,
-  LIVE_TAB, syncTabs, type TabState,
+  LIVE_TAB, meetingIdOfTab, MEETINGS_TAB, openMeetingTab, syncTabs, type TabState,
 } from './tabs'
 import { useView } from './useView'
 
@@ -69,6 +71,20 @@ export function Workspace({
     [updatePanels],
   )
   const columnWidth = (panel: Panel) => (panels.collapsed[panel] ? 0 : panels.widths[panel])
+  // 회의 탭 : 회의가 바뀌면 version 을 올려 목록 · 탭 제목을 다시 불러온다 - 보는 사람을 바꾸면 Workspace 가 다시 그려져 열린 회의 탭은 사라진다
+  const [meetingVersion, setMeetingVersion] = useState(0)
+  const [meetingTitles, setMeetingTitles] = useState<Map<string, string>>(new Map())
+  useEffect(() => {
+    let alive = true
+    // 503 이나 실패면 탭 제목을 id 로 둔다 - 안내는 회의 탭이 보인다
+    fetchMeetings(viewer.viewer_id)
+      .then((list) => alive && setMeetingTitles(new Map(list.map((m) => [m.meeting_id, m.title]))))
+      .catch(() => alive && setMeetingTitles(new Map()))
+    return () => {
+      alive = false
+    }
+  }, [viewer.viewer_id, meetingVersion])
+  const openMeeting = (meetingId: string) => setTabs((state) => openMeetingTab(state, meetingId))
   const [graphSelected, setGraphSelected] = useState<string | null>(null)
 
   const notes = current.data?.notes ?? null
@@ -96,6 +112,22 @@ export function Workspace({
   const center = () => {
     if (current.error) return <div className="notice error">오류 : {current.error}</div>
     if (tabs.active === DASHBOARD_TAB) return <Dashboard mode={mode} views={views} viewer={viewer} showNames={showNames} onOpenNote={openNote} />
+    if (tabs.active === MEETINGS_TAB) {
+      return <MeetingsTab viewer={viewer} version={meetingVersion} onOpenMeeting={openMeeting} />
+    }
+    const activeMeetingId = meetingIdOfTab(tabs.active)
+    if (activeMeetingId !== null) {
+      return (
+        <MeetingPage
+          key={activeMeetingId}
+          viewer={viewer}
+          meetingId={activeMeetingId}
+          view={current.data}
+          onOpenNote={openNote}
+          onChanged={() => setMeetingVersion((n) => n + 1)}
+        />
+      )
+    }
     if (tabs.active === COMPARE_VIEWER_TAB) {
       return <CompareViewer viewer={viewer} viewers={viewers} mode={mode} viewA={current.data} jobId={jobFor(mode)} onOpenNote={openNote} />
     }
@@ -137,9 +169,12 @@ export function Workspace({
   const tabLabel = (key: string) => {
     if (key === DASHBOARD_TAB) return '대시보드'
     if (key === GRAPH_TAB) return '그래프'
+    if (key === MEETINGS_TAB) return '회의'
     if (key === COMPARE_VIEWER_TAB) return '보는 사람 비교'
     if (key === COMPARE_MODE_TAB) return '모드 비교'
     if (key === LIVE_TAB) return '라이브 투입'
+    const meetingId = meetingIdOfTab(key)
+    if (meetingId !== null) return meetingTitles.get(meetingId) ?? meetingId
     const id = noteIdOfTab(key)
     return (id && titles.get(id)) || id || key
   }
@@ -162,6 +197,9 @@ export function Workspace({
           </button>
           <button className={tabs.active === GRAPH_TAB ? 'on' : ''} onClick={() => setTabs((s) => activate(s, GRAPH_TAB))}>
             그래프
+          </button>
+          <button className={tabs.active === MEETINGS_TAB ? 'on' : ''} onClick={() => setTabs((s) => activate(s, MEETINGS_TAB))}>
+            회의
           </button>
           <button
             className={tabs.active === COMPARE_VIEWER_TAB ? 'on' : ''}
@@ -199,7 +237,7 @@ export function Workspace({
               <button className="tab-name" onClick={() => setTabs((s) => activate(s, key))}>
                 {tabLabel(key)}
               </button>
-              {noteIdOfTab(key) !== null && (
+              {(noteIdOfTab(key) !== null || meetingIdOfTab(key) !== null) && (
                 <button className="tab-close" aria-label="탭 닫기" onClick={() => setTabs((s) => closeTab(s, key))}>
                   ×
                 </button>

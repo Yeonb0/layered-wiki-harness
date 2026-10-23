@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
-  activate, closeTab, COMPARE_MODE_TAB, COMPARE_VIEWER_TAB, DASHBOARD_TAB, GRAPH_TAB, INITIAL_TABS, LIVE_TAB, noteTabKey, openTab,
+  activate, closeTab, COMPARE_MODE_TAB, COMPARE_VIEWER_TAB, DASHBOARD_TAB, GRAPH_TAB, INITIAL_TABS, LIVE_TAB, MEETINGS_TAB, meetingIdOfTab, meetingTabKey, noteTabKey, openMeetingTab, openTab,
   syncTabs,
 } from './tabs'
 
-const FIXED = [DASHBOARD_TAB, GRAPH_TAB, COMPARE_VIEWER_TAB, COMPARE_MODE_TAB, LIVE_TAB]
+const FIXED = [DASHBOARD_TAB, GRAPH_TAB, MEETINGS_TAB, COMPARE_VIEWER_TAB, COMPARE_MODE_TAB, LIVE_TAB]
 
 describe('탭 상태', () => {
-  it('처음에는 고정 탭 다섯 ( 대시보드, 그래프, 보는 사람 비교, 모드 비교, 라이브 투입 ) 이고 대시보드가 활성이다', () => {
+  it('처음에는 고정 탭 여섯 ( 대시보드, 그래프, 회의, 보는 사람 비교, 모드 비교, 라이브 투입 ) 이고 대시보드가 활성이다', () => {
     expect(INITIAL_TABS).toEqual({ tabs: FIXED, active: DASHBOARD_TAB })
   })
 
@@ -58,5 +58,24 @@ describe('탭 상태', () => {
     expect(synced.tabs).toEqual([...FIXED, noteTabKey('노트1')])
     expect(synced.active).toBe(DASHBOARD_TAB)
     expect(syncTabs(state, new Set(['노트1', '노트2']))).toBe(state)
+  })
+})
+
+describe('회의 탭', () => {
+  it('키를 만들고 되돌린다', () => {
+    expect(meetingTabKey('m0001')).toBe('meeting:m0001')
+    expect(meetingIdOfTab('meeting:m0001')).toBe('m0001')
+    expect(meetingIdOfTab('note:m0001')).toBeNull()
+  })
+
+  it('같은 회의를 두 번 열어도 탭이 늘지 않고 닫을 수 있다', () => {
+    const once = openMeetingTab(INITIAL_TABS, 'm0001')
+    expect(openMeetingTab(activate(once, DASHBOARD_TAB), 'm0001').tabs).toEqual(once.tabs)
+    expect(closeTab(once, meetingTabKey('m0001')).tabs).toEqual(FIXED)
+  })
+
+  it('노트 보기가 바뀌어도 회의 탭은 남는다', () => {
+    const once = openMeetingTab(INITIAL_TABS, 'm0001')
+    expect(syncTabs(once, new Set()).tabs).toContain(meetingTabKey('m0001'))
   })
 })
