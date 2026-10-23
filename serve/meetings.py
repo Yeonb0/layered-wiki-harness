@@ -30,6 +30,11 @@ _TASK_UPDATE = ("title", "assignee", "due", "status")
 _EMPTY = {"version": 1, "meetings": [], "tasks": []}
 
 
+class AlreadyLinkedError(Exception):
+  # 회의록이 이미 연결된 회의 - 409 로 돌려준다
+  pass
+
+
 class NotFoundError(Exception):
   # 볼 수 없는 항목과 없는 항목을 구분하지 않는다 - 존재 여부를 드러내지 않으려고 같은 오류를 쓴다
   pass
@@ -344,6 +349,26 @@ class MeetingStore:
       row["updated_at"] = self._now()
       self._save()
       return self._meeting_row(row)
+
+  # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 회의록 투입 - 회의의 minutes_doc_id 연결은 비어 있을 때만 한 번 걸고, 실패하면 되돌린다
+  def link_minutes(self, meeting_id: str, doc_id: str) -> None:
+    with self.lock:
+      for row in self.data["meetings"]:
+        if row["meeting_id"] == meeting_id:
+          if row["minutes_doc_id"] is not None:
+            raise AlreadyLinkedError("이미 회의록이 연결된 회의다")
+          row["minutes_doc_id"] = doc_id
+          self._save()
+          return
+    raise NotFoundError("회의를 찾을 수 없다")
+
+  def unlink_minutes(self, meeting_id: str, doc_id: str) -> None:
+    with self.lock:
+      for row in self.data["meetings"]:
+        if row["meeting_id"] == meeting_id and row["minutes_doc_id"] == doc_id:
+          row["minutes_doc_id"] = None
+          self._save()
+          return
 
   # ---- 할 일 ----
   def list_tasks(self, target, meeting_id=None, assignee=None) -> list:

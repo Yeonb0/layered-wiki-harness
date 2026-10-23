@@ -29,7 +29,8 @@ from runner.v2_sequential import (
   git_head_commit,
   load_source_docs,
 )
-from serve.meetings import MeetingStore, NotFoundError
+from serve.meetings import AlreadyLinkedError, MeetingStore, NotFoundError
+from serve.minutes import TEXT_MAX_CHARS, ConflictError, MinutesStore, source_doc_of
 
 # 시연 앞단 ( 사용자 결정 2026-10-16 Dify 필수 ) : 시연은 제안 조건 실행의 설정을 그대로 쓰므로 실행 manifest 의 args 에서 읽을 키를 고정한다
 _REQUIRED_ARGS = (
@@ -53,6 +54,11 @@ _JOB_PATH = re.compile(r"/jobs/([0-9a-f]{32})")
 # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능 - 회의 · 할 일은 노트와 같은 층 규칙으로 서버가 거른다
 _MEETING_PATH = re.compile(r"/meetings(?:/([a-z0-9]{1,40}))?")
 _WORKSPACE_PATH = "/workspaces"
+# 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 회의록 투입 문서는 합성 시연 코퍼스 차수 901. 시연 작업 폴더에만 쓰고 실험 코퍼스 · 평가 집계에 넣지 않는다 ( 3절 24 · 25 )
+_MINUTES_PATH = "/minutes"
+_PROPOSAL_PATH = re.compile(r"/proposals(?:/(901[0-9]{29})(/decide|/trace)?)?")
+# 회의록 본문은 20000자까지이고 JSON 이스케이프로 한 글자가 6바이트까지 늘 수 있다
+MINUTES_MAX_BODY_BYTES = TEXT_MAX_CHARS * 6 + MAX_BODY_BYTES
 _TASK_PATH = re.compile(r"/tasks(?:/([a-z0-9]{1,40})(/progress)?)?")
 _WAIT_VALUE = re.compile(r"[0-9]+")
 # 본문 읽기에 실패해 이미 응답을 보냈다는 표지
@@ -154,6 +160,9 @@ class DemoApp:
     # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능 - 회의 · 할 일은 노트와 같은 층 규칙으로 서버가 거른다
     # 회의 저장소 - None 이면 회의 경로는 모두 503 이다. 저장소는 구성원 표 · 표시 이름이 필요해서 main 이 앱을 만든 뒤 붙이기도 한다
     self.meetings = meetings
+    # 회의록 저장소 - None 이면 회의록 경로는 모두 503 이다
+    self.minutes = None
+    self.decide_lock = threading.Lock()
     self.print_fn = print_fn
     self.work_root = work_root
     self.base_run = os.path.basename(os.path.normpath(run_dir))
@@ -295,6 +304,10 @@ class DemoApp:
       if Job["status"] != "completed" or Job["mode"] != mode:
         return 400, {"ok": False, "error_type": "BadRequest", "message": "완료된 같은 mode 의 작업이어야 한다"}
       Notes, Dropped = self._overlay(Notes, Job)
+    # 승인된 회의록 노트는 job 과 별개로 그 doc 의 mode 보기에 항상 겹친다 - 같은 doc 의 job 겹침이 이미 그 노트를 담으면 건너뛴다
+    Notes, MinutesDropped, MinutesIds = self._minutes_overlay(Notes, mode, Job["doc_id"] if job_id is not None else None)
+    if MinutesDropped:
+      Dropped = (Dropped or 0) + MinutesDropped
     try:
       Pairs = visible_pairs_for(Target[0], Target[1], self.membership)
       Included, Links, Counts = view_selection(Notes, Pairs)
@@ -314,6 +327,8 @@ class DemoApp:
       return 500, self._mask({"ok": False, "error_type": "ValueError", "message": str(Error)})
     if Dropped is not None:
       Counts["overlay_dangling_links_dropped"] = Dropped
+    if self.minutes is not None:
+      Counts["minutes_notes_included"] = sum(1 for Item in Items if Item["note_id"] in MinutesIds)
     return 200, self._mask({"mode": mode, "viewer_id": viewer_id, "show_names": self.show_names, "notes": Items, "counts": Counts})
 
   def _overlay(self, Notes: list, Job: dict) -> tuple:
@@ -435,7 +450,7 @@ class DemoApp:
       self.lock.release()
 
   # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
-  def submit(self, body) -> tuple[int, dict]:
+  def submit(self, body, on_done=None) -> tuple[int, dict]:
     Error, DocId, Mode = self._check_request(body)
     if Error is not None:
       return Error
@@ -443,6 +458,7 @@ class DemoApp:
     Job = {
       "job_id": JobId, "doc_id": DocId, "mode": Mode, "status": "running", "submitted_at_utc": _utc_now(),
       "started_monotonic": time.monotonic(), "event": threading.Event(), "http_status": None, "result": None,
+      "on_done": on_done,
     }
     Job["thread"] = threading.Thread(target=self._job_main, args=(Job,), daemon=True)
     with self.meta_lock:
@@ -488,7 +504,12 @@ class DemoApp:
       with self.meta_lock:
         self.current_job_id = None
         self.lock.release()
-      Job["event"].set()
+      try:
+        # 작업이 끝난 직후 호출자의 후처리 ( 회의록 doc 상태 ) - 조회하는 쪽이 완료를 보기 전에 끝나야 한다
+        if Job.get("on_done") is not None:
+          Job["on_done"](Job)
+      finally:
+        Job["event"].set()
 
   # 사용자 결정 2026-10-23 : 라이브 투입은 화면 → 시연 API → Dify 워크플로 → 시연 API /jobs. Dify 앱 키는 서버만 가진다
   def live_start(self, body) -> tuple[int, dict]:
@@ -640,6 +661,340 @@ class DemoApp:
     except ValueError as Error:
       return 400, self._mask({"ok": False, "error_type": "BadRequest", "message": str(Error)})
 
+  # ---- 회의록 투입 · 승인 게이트 · 판정 기록 보기 ----
+  def attach_minutes(self, Store: MinutesStore) -> None:
+    # 시작 때 저장된 901 doc 를 doc 목록에 올린다 - 실험 코퍼스 경로에는 아무것도 쓰지 않는다
+    self.minutes = Store
+    for Record in Store.docs():
+      if Record["status"] == "running":
+        # 서버가 꺼져 작업이 끝나지 못한 doc 는 조용히 두지 않고 실패로 남긴다
+        Record = Store.update(Record["doc_id"], status="failed", error="Interrupted : 서버가 다시 시작돼 작업이 끝나지 못했다")
+      self.docs[Record["doc_id"]] = source_doc_of(Record)
+      self.raw_sha[Record["doc_id"]] = Record["raw_sha256"]
+
+  def _minutes_overlay(self, Notes: list, Mode: str, SkipDoc) -> tuple:
+    if self.minutes is None:
+      return Notes, 0, set()
+    Approved = []
+    for Record in self.minutes.docs():
+      if Record["mode"] == Mode and Record["status"] == "decided" and Record["doc_id"] != SkipDoc:
+        Approved += Record["approved_notes"]
+    Ids = {Note["note_id"] for Note in Notes} | {Note["note_id"] for Note in Approved}
+    Dropped = 0
+    Out = []
+    for Note in Approved:
+      Note = dict(Note)
+      Up = [Target for Target in Note["upward_links"] if Target in Ids]
+      Down = [Link for Link in Note["downward_conditional_links"] if Link["target_id"] in Ids]
+      Dropped += len(Note["upward_links"]) - len(Up) + len(Note["downward_conditional_links"]) - len(Down)
+      Note["upward_links"], Note["downward_conditional_links"] = Up, Down
+      Out.append(Note)
+    return Notes + Out, Dropped, {Note["note_id"] for Note in Out}
+
+  def _viewer_params(self, method: str, query: dict, body) -> tuple:
+    if method == "GET":
+      Values = query.get("viewer", [])
+      if len(Values) != 1 or not Values[0]:
+        raise ValueError("viewer 가 필요하다")
+      Params = {}
+      for Key, Many in query.items():
+        if Key == "viewer":
+          continue
+        if len(Many) != 1:
+          raise ValueError(f"{Key} 는 하나만 줄 수 있다")
+        Params[Key] = Many[0]
+      return Values[0], Params
+    if not isinstance(body, dict) or not isinstance(body.get("viewer"), str) or not body["viewer"]:
+      raise ValueError("본문에 viewer 가 필요하다")
+    return body["viewer"], {Key: Value for Key, Value in body.items() if Key != "viewer"}
+
+  def minutes_request(self, method: str, path: str, query: dict, body) -> tuple:
+    if self.meetings is None:
+      return 503, {"ok": False, "error_type": "MeetingsNotConfigured", "message": "회의 기능이 설정되지 않았다"}
+    if self.minutes is None:
+      return 503, {"ok": False, "error_type": "MinutesNotConfigured", "message": "회의록 투입이 설정되지 않았다"}
+    Proposal = _PROPOSAL_PATH.fullmatch(path)
+    if path != _MINUTES_PATH and Proposal is None:
+      return 404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"}
+    try:
+      ViewerId, Params = self._viewer_params(method, query, body)
+      Target = self._viewer_target(ViewerId)
+      if Target is None:
+        raise ValueError("viewers 에 없는 viewer 이다")
+      if path == _MINUTES_PATH:
+        if method != "POST":
+          raise ValueError("회의록 투입은 POST 다")
+        return self._minutes_submit(Target, Params)
+      DocId, Action = Proposal.group(1), Proposal.group(2)
+      if Action == "/decide":
+        if method != "POST":
+          raise ValueError("승인 · 반려는 POST 다")
+        return self._decide(Target, DocId, Params)
+      if method != "GET" or Params:
+        raise ValueError("제안 조회는 viewer 만 받는 GET 이다")
+      if DocId is None:
+        return 200, self._mask({"proposals": self._proposal_list(Target)})
+      if Action == "/trace":
+        return 200, self._mask(self._trace(Target, DocId))
+      return 200, self._mask(self._proposal_detail(Target, DocId))
+    except NotFoundError as Error:
+      return 404, {"ok": False, "error_type": "NotFound", "message": str(Error)}
+    except AlreadyLinkedError as Error:
+      return 409, {"ok": False, "error_type": "MinutesAlreadyLinked", "message": str(Error)}
+    except ConflictError as Error:
+      return 409, {"ok": False, "error_type": "Conflict", "message": str(Error)}
+    except ValueError as Error:
+      return 400, self._mask({"ok": False, "error_type": "BadRequest", "message": str(Error)})
+
+  def _minutes_submit(self, Target, Params: dict) -> tuple:
+    if set(Params) != {"meeting_id", "mode", "text"}:
+      raise ValueError("본문은 { viewer, meeting_id, mode, text } 이어야 한다")
+    MeetingId, Mode, Text = Params["meeting_id"], Params["mode"], Params["text"]
+    if not isinstance(MeetingId, str) or not isinstance(Mode, str) or not isinstance(Text, str):
+      raise ValueError("meeting_id · mode · text 는 문자열이어야 한다")
+    if Target[0] != "개인":
+      raise ValueError("회의록은 개인 보는 사람만 투입한다")
+    try:
+      Meeting = self.meetings.get_meeting(Target, MeetingId)
+    except NotFoundError:
+      raise ValueError("볼 수 없는 회의다") from None
+    # 사용자 결정 2026-10-23 : 개인 일정에는 회의록 투입을 막는다 - 개인 문서의 팀 워크스페이스 ( source_team ) 를 지어내지 않는다
+    if Meeting["workspace"]["layer"] == "개인":
+      raise ValueError("개인 일정에는 회의록을 투입하지 않는다")
+    Name = self.meetings.viewer_name(Target)
+    if Name not in Meeting["attendees"]:
+      raise ValueError("회의 참석자만 회의록을 투입한다")
+    if Mode not in self.cells:
+      raise ValueError(f"불러온 모드가 아니다: {list(self.cells)}")
+    if not Text.strip() or len(Text) > TEXT_MAX_CHARS:
+      raise ValueError(f"text 는 1 ~ {TEXT_MAX_CHARS}자여야 한다")
+    if Meeting["minutes_doc_id"] is not None:
+      raise AlreadyLinkedError("이미 회의록이 연결된 회의다")
+    Record = self.minutes.create(Meeting, Mode, Text, Name, self.meetings.now_fn())
+    DocId = Record["doc_id"]
+    try:
+      self.meetings.link_minutes(MeetingId, DocId)
+    except Exception as Error:
+      self.minutes.update(DocId, status="failed", error=f"{type(Error).__name__} : {Error}")
+      raise
+    self.docs[DocId] = source_doc_of(Record)
+    self.raw_sha[DocId] = Record["raw_sha256"]
+    Status, Body = self.submit({"doc_id": DocId, "mode": Mode}, on_done=self._minutes_done)
+    if Status != 202:
+      # 잠금이 잡혀 있으면 doc 는 실패로 남기고 회의 연결은 되돌린다
+      self.minutes.update(DocId, status="failed", error=Body.get("error_type", "Unknown"))
+      self.meetings.unlink_minutes(MeetingId, DocId)
+      return Status, Body
+    self.minutes.update(DocId, job_id=Body["job_id"])
+    return 202, {"ok": True, "doc_id": DocId, "job_id": Body["job_id"]}
+
+  def _minutes_done(self, Job: dict) -> None:
+    # 작업이 끝난 시점에 doc 상태를 정한다 - 작업이 failed 이거나 decompose.ok 가 False 면 failed, 그 밖은 승인 대기. 노트는 아직 볼트에 넣지 않는다
+    DocId = Job["doc_id"]
+    try:
+      Result = Job["result"] or {}
+      Fields = {"job_id": Job["job_id"]}
+      if Job["status"] != "completed":
+        Fields.update(status="failed", error=f"{Result.get('error_type', 'Unknown')} : {Result.get('message', '')}")
+      else:
+        Fields["request_dir"] = Result["request_dir"]
+        if not Result["decompose"]["ok"]:
+          Fields.update(status="failed", error=f"DecomposeFailed : {Result['decompose']['error']}")
+        else:
+          Fields.update(status="awaiting_approval" if Result["notes"] else "decided", note_count=len(Result["notes"]))
+      self.minutes.update(DocId, **Fields)
+    except Exception as Error:
+      self.minutes.update(DocId, status="failed", error=f"{type(Error).__name__} : {Error}")
+
+  def _proposal_doc(self, Target, DocId: str) -> tuple:
+    # 볼 수 없는 회의의 doc 는 없는 doc 와 같은 404 다
+    Record = self.minutes.get(DocId)
+    if Record is None:
+      raise NotFoundError("제안을 찾을 수 없다")
+    try:
+      Meeting = self.meetings.get_meeting(Target, Record["meeting_id"])
+    except NotFoundError:
+      raise NotFoundError("제안을 찾을 수 없다") from None
+    return Record, Meeting
+
+  def _proposal_notes(self, Record: dict) -> tuple:
+    # 작업 산출물 ( log.jsonl · new_notes.jsonl ) 에서 노트별 ( place 항목, 응답용 노트, 노트 레코드 ) 를 읽는다
+    if Record["request_dir"] is None:
+      return [], []
+    Dir = Record["request_dir"]
+    with open(os.path.join(Dir, "log.jsonl"), encoding="utf-8") as File:
+      Log = [json.loads(Line) for Line in File if Line.strip()]
+    New = _read_vault_notes(os.path.join(Dir, "new_notes.jsonl"))
+    Places = [Entry for Entry in Log if Entry["entry_type"] == "place"]
+    Payload = self._notes_payload(Log, New)
+    ById = {Note.note_id: Note for Note in New}
+    return Log, [(Entry, Item, ById.get(Item["note_id"])) for Entry, Item in zip(Places, Payload)]
+
+  def _decision_counts(self, Record: dict) -> dict:
+    Approved = sum(1 for Item in Record["decisions"].values() if Item["decision"] == "approve")
+    Rejected = len(Record["decisions"]) - Approved
+    return {"approved": Approved, "rejected": Rejected, "pending": Record["note_count"] - len(Record["decisions"])}
+
+  def _proposal_list(self, Target) -> list:
+    Out = []
+    for Record in self.minutes.docs():
+      try:
+        self.meetings.get_meeting(Target, Record["meeting_id"])
+      except NotFoundError:
+        continue
+      Out.append({
+        "doc_id": Record["doc_id"], "meeting_id": Record["meeting_id"], "mode": Record["mode"], "status": Record["status"],
+        "note_count": Record["note_count"], **self._decision_counts(Record),
+      })
+    return sorted(Out, key=lambda Item: Item["doc_id"])
+
+  def _proposal_detail(self, Target, DocId: str) -> dict:
+    Record, _ = self._proposal_doc(Target, DocId)
+    Notes = []
+    if Record["status"] in ("awaiting_approval", "decided"):
+      _, Rows = self._proposal_notes(Record)
+      Pairs = visible_pairs_for(Target[0], Target[1], self.membership)
+      Known = self._known_notes(Record["mode"], [Row[2] for Row in Rows if Row[2] is not None])
+      for Entry, Item, Note in Rows:
+        # 링크 대상이 이 보는 사람에게 보이지 않으면 id 가 새어 나가므로 빼고 수만 센다
+        Up = [Id for Id in Item["upward_links"] if self._candidate_visible(Id, Known, Pairs)]
+        Down = [
+          {"target_id": Link["target_id"], "target_layer": Link["target_layer"]}
+          for Link in Item["downward_links"] if (Link["target_layer"], self._link_group(Link, Note)) in Pairs
+        ]
+        Notes.append({
+          "note_index": Entry["note_index"], "title": Item["title"], "layer": Item["layer"], "group_label": Item["group_label"],
+          "body": (Note.body if self.show_names else f"( 본문 {len(Note.body)}자 가림 )") if Note is not None else None,
+          "source_segment_ids": Item["source_segment_ids"], "upward_links": Up, "downward_links": Down,
+          "hidden_links": len(Item["upward_links"]) - len(Up) + len(Item["downward_links"]) - len(Down),
+          "problems": Item["problems"], "decision": Record["decisions"].get(str(Entry["note_index"])),
+        })
+    return {
+      "doc_id": Record["doc_id"], "meeting_id": Record["meeting_id"], "mode": Record["mode"], "status": Record["status"],
+      "error": Record["error"], "note_count": Record["note_count"], **self._decision_counts(Record), "notes": Notes,
+    }
+
+  def _link_group(self, Link: dict, Note) -> object:
+    # 하향 조건부 링크의 대상 그룹은 노트 레코드의 가시성 조건에 있다
+    for Item in Note.downward_conditional_links:
+      if Item.target_id == Link["target_id"]:
+        return Item.visibility_condition["group"]
+    raise ValueError("링크의 가시성 조건을 찾을 수 없다")
+
+  def _known_notes(self, Mode: str, Extra: list) -> dict:
+    # 후보 · 링크 대상의 ( 층, 그룹 ) 을 찾는 표 - 기본 볼트, 승인된 회의록 노트, 이 제안의 새 노트
+    Known = {Note.note_id: (Note.layer, Note.group) for Note in self.cells[Mode]["notes"]}
+    for Record in self.minutes.docs():
+      if Record["mode"] == Mode:
+        for Note in Record["approved_notes"]:
+          Known[Note["note_id"]] = (Note["layer"], Note["group"])
+    for Note in Extra:
+      Known[Note.note_id] = (Note.layer, Note.group)
+    return Known
+
+  @staticmethod
+  def _candidate_visible(NoteId: str, Known: dict, Pairs: set) -> bool:
+    # 알 수 없는 노트는 보이는지 확인할 수 없으므로 가린다
+    return NoteId in Known and Known[NoteId] in Pairs
+
+  def _trace(self, Target, DocId: str) -> dict:
+    # 판정 기록 보기는 감사 기록을 보는 사람의 보기 범위 안에서만 보인다 - 보이지 않는 후보의 제목 · 근거는 누출 경로다 ( 3절 14 )
+    Record, _ = self._proposal_doc(Target, DocId)
+    if Record["request_dir"] is None:
+      raise ConflictError("판정 기록이 아직 없다")
+    Log, Rows = self._proposal_notes(Record)
+    Pairs = visible_pairs_for(Target[0], Target[1], self.membership)
+    Known = self._known_notes(Record["mode"], [Row[2] for Row in Rows if Row[2] is not None])
+    Decompose = next(Entry for Entry in Log if Entry["entry_type"] == "decompose")
+    Places = []
+    for Entry, _, _ in Rows:
+      Visible, HiddenIds = [], set()
+      for Cand in Entry["candidates"]:
+        if self._candidate_visible(Cand["id"], Known, Pairs):
+          Visible.append({
+            "id": Cand["id"], "layer": Cand["layer"], "group_label": group_label(Cand["layer"], Known[Cand["id"]][1], self.labels),
+            "title": Cand["title"],
+          })
+        else:
+          HiddenIds.add(Cand["id"])
+      VisibleIds = {Cand["id"] for Cand in Visible}
+      Verdict = Entry["verdict"]
+      Up = [Id for Id in (Verdict["upward_links"] if Verdict else []) if Id in VisibleIds]
+      Down = [Id for Id in (Verdict["downward_target_ids"] if Verdict else []) if Id in VisibleIds]
+      Chosen = (len(Verdict["upward_links"]) + len(Verdict["downward_target_ids"])) if Verdict else 0
+      Places.append({
+        "note_index": Entry["note_index"], "layer": Verdict["layer"] if Verdict else None, "upward_links": Up, "downward_links": Down,
+        "hidden_links": Chosen - len(Up) - len(Down),
+        # 문제 문구에 가려진 후보 id 가 들어 있으면 그 문구는 내보내지 않는다
+        "problems": [Text if not any(Id in Text for Id in HiddenIds) else "( 가려진 후보 관련 )" for Text in Entry["problems"]],
+        "candidates": Visible, "hidden_candidates": len(HiddenIds),
+        "rationale": Verdict["rationale"] if Verdict and not HiddenIds else None,
+        "rationale_hidden": bool(HiddenIds and Verdict),
+      })
+    return {
+      "doc_id": Record["doc_id"], "meeting_id": Record["meeting_id"], "mode": Record["mode"],
+      "decompose": {
+        "ok": Decompose["ok"], "error": Decompose["error"],
+        "notes": [
+          {"note_index": Index, "title": Note["title"], "segment_ids": list(Note["source_segment_ids"])}
+          for Index, Note in enumerate(Decompose["notes"])
+        ],
+      },
+      "places": Places,
+    }
+
+  def _decide(self, Target, DocId: str, Params: dict) -> tuple:
+    # 승인 게이트는 에이전트 결과를 쓰기 전에 사람이 확인하는 문이며 승격 ( 층 이동 ) 이 아니다 - 층 · 그룹 · 링크는 바꿀 수 없다
+    Record, Meeting = self._proposal_doc(Target, DocId)
+    Name = self.meetings.viewer_name(Target)
+    if Target[0] != "개인" or Name not in Meeting["attendees"]:
+      raise ValueError("회의 참석자 ( 개인 보는 사람 ) 만 승인 · 반려한다")
+    if set(Params) != {"decisions"}:
+      raise ValueError("본문은 { viewer, decisions } 이어야 한다 ( 층 · 그룹 · 링크는 바꿀 수 없다 )")
+    Items = Params["decisions"]
+    if not isinstance(Items, list) or not Items:
+      raise ValueError("decisions 는 비어 있지 않은 목록이어야 한다")
+    with self.decide_lock:
+      Record = self.minutes.get(DocId)
+      if Record["status"] != "awaiting_approval":
+        raise ConflictError(f"승인 대기 상태가 아니다: {Record['status']}")
+      _, Rows = self._proposal_notes(Record)
+      ByIndex = {Entry["note_index"]: (Item, Note) for Entry, Item, Note in Rows}
+      Seen = set()
+      for Item in Items:
+        if not isinstance(Item, dict) or set(Item) != {"note_index", "decision"}:
+          raise ValueError("decisions 항목은 { note_index, decision } 만 가질 수 있다 ( 층 · 그룹 · 링크는 바꿀 수 없다 )")
+        Index, Decision = Item["note_index"], Item["decision"]
+        if not isinstance(Index, int) or isinstance(Index, bool) or Index not in ByIndex:
+          raise ValueError(f"알 수 없는 note_index: {Index!r}")
+        if Decision not in ("approve", "reject"):
+          raise ValueError(f"decision 은 approve 또는 reject 이다: {Decision!r}")
+        if str(Index) in Record["decisions"] or Index in Seen:
+          raise ValueError(f"이미 결정된 note_index 는 바꾸지 않는다: {Index}")
+        if Decision == "approve" and ByIndex[Index][1] is None:
+          raise ValueError(f"배치에 실패한 노트는 승인할 수 없다: {Index}")
+        Seen.add(Index)
+      At = self.meetings.now_fn().strftime("%Y-%m-%dT%H:%M")
+      Decisions = dict(Record["decisions"])
+      for Item in Items:
+        Decisions[str(Item["note_index"])] = {"decision": Item["decision"], "by": Name, "at": At}
+      Fields = {"decisions": Decisions}
+      if len(Decisions) == Record["note_count"]:
+        Rejected = {ByIndex[int(Key)][1].note_id for Key, Value in Decisions.items() if Value["decision"] == "reject" and ByIndex[int(Key)][1] is not None}
+        Approved, Dropped = [], 0
+        for Key in sorted(Decisions, key=int):
+          if Decisions[Key]["decision"] != "approve":
+            continue
+          Note = asdict(ByIndex[int(Key)][1])
+          Up = [Id for Id in Note["upward_links"] if Id not in Rejected]
+          Down = [Link for Link in Note["downward_conditional_links"] if Link["target_id"] not in Rejected]
+          Dropped += len(Note["upward_links"]) - len(Up) + len(Note["downward_conditional_links"]) - len(Down)
+          Note["upward_links"], Note["downward_conditional_links"] = Up, Down
+          Approved.append(Note)
+        Fields.update(status="decided", approved_notes=Approved, approved_links_dropped=Dropped)
+      Saved = self.minutes.update(DocId, **Fields)
+    return 200, self._mask({"ok": True, "doc_id": DocId, "status": Saved["status"], **self._decision_counts(Saved)})
+
   # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
   def job_status(self, job_id: str, wait_seconds: int) -> tuple[int, dict]:
     if not isinstance(wait_seconds, int) or isinstance(wait_seconds, bool) or not 0 <= wait_seconds <= MAX_WAIT_SECONDS:
@@ -784,6 +1139,10 @@ def make_handler(App: DemoApp, cors_origin=None):
         Parts = urlsplit(self.path)
         Status, Obj = App.meetings_request("GET", Parts.path, parse_qs(Parts.query, keep_blank_values=True), None)
         self._send(Status, Obj)
+      elif _PROPOSAL_PATH.fullmatch(urlsplit(self.path).path):
+        Parts = urlsplit(self.path)
+        Status, Obj = App.minutes_request("GET", Parts.path, parse_qs(Parts.query, keep_blank_values=True), None)
+        self._send(Status, Obj)
       elif urlsplit(self.path).path == "/viewers":
         self._send(200, App.viewers())
       elif urlsplit(self.path).path == "/view":
@@ -819,14 +1178,14 @@ def make_handler(App: DemoApp, cors_origin=None):
         return None
       return int(Values[0])
 
-    def _read_json_body(self):
+    def _read_json_body(self, Limit=MAX_BODY_BYTES):
       # POST /run 과 POST /jobs 가 같은 길이 · JSON 검사를 쓴다 - 오류면 400 을 보내고 _BAD_BODY ( JSON null 도 정상 본문이라 None 을 쓰지 않는다 )
       try:
         Length = int(self.headers.get("Content-Length", ""))
       except ValueError:
         Length = -1
       # 길이를 모르거나 상한을 넘는 본문은 읽지 않는다
-      if Length < 0 or Length > MAX_BODY_BYTES:
+      if Length < 0 or Length > Limit:
         self._send(400, {"ok": False, "error_type": "BadRequest", "message": "본문 길이가 없거나 너무 크다"})
         return _BAD_BODY
       try:
@@ -842,6 +1201,13 @@ def make_handler(App: DemoApp, cors_origin=None):
         if Body is _BAD_BODY:
           return
         Status, Obj = App.meetings_request("POST", Path, {}, Body)
+        self._send(Status, Obj)
+        return
+      if self.path == Path and (Path == _MINUTES_PATH or _PROPOSAL_PATH.fullmatch(Path)):
+        Body = self._read_json_body(MINUTES_MAX_BODY_BYTES if Path == _MINUTES_PATH else MAX_BODY_BYTES)
+        if Body is _BAD_BODY:
+          return
+        Status, Obj = App.minutes_request("POST", Path, {}, Body)
         self._send(Status, Obj)
         return
       if self.path not in ("/run", "/jobs", "/live"):
@@ -880,7 +1246,11 @@ def parse_args(argv=None) -> argparse.Namespace:
   # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능 - 회의 · 할 일은 노트와 같은 층 규칙으로 서버가 거른다
   Parser.add_argument("--meetings-file", default=None)
   Parser.add_argument("--meetings-seed", default=None)
+  # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 회의록 투입 문서는 합성 시연 코퍼스 차수 901. 시연 작업 폴더에만 쓴다
+  Parser.add_argument("--minutes-dir", default=None)
   Args = Parser.parse_args(argv)
+  if Args.minutes_dir is not None and Args.meetings_file is None:
+    Parser.error("--minutes-dir 는 --meetings-file 과 함께 줘야 한다")
   if (Args.dify_url is None) != (Args.dify_key_env is None):
     Parser.error("--dify-url 과 --dify-key-env 는 함께 줘야 한다")
   # 예시만 주면 쓸 파일이 없다
@@ -916,6 +1286,20 @@ def meetings_from_args(Args, App, repo_dir=REPO_DIR):
   return MeetingStore(Path, Seed, App.membership, App.labels)
 
 
+def minutes_from_args(Args, App, repo_dir=REPO_DIR):
+  if Args.minutes_dir is None:
+    return None
+  # 가린 실행 ( 실제 코퍼스 ) 에는 합성 회의록을 섞지 않는다
+  if not App.show_names:
+    raise SystemExit("회의록 투입은 합성 시연 실행에서만 켠다")
+  Path = os.path.realpath(os.path.expanduser(Args.minutes_dir))
+  Repo = os.path.realpath(repo_dir)
+  # 저장소 안에 쓰면 시연 중 바뀐 회의록 파일이 커밋에 섞인다
+  if os.path.commonpath([Repo, Path]) == Repo:
+    raise SystemExit("회의록 폴더는 저장소 밖 시연 작업 폴더에 둔다")
+  return MinutesStore(Path)
+
+
 def _print_flush(Line: str) -> None:
   print(Line, flush=True)
 
@@ -927,6 +1311,9 @@ def main(argv=None) -> None:
     work_root=DEFAULT_WORK_ROOT, print_fn=_print_flush, dify_fn=dify_fn_from_args(Args),
   )
   App.meetings = meetings_from_args(Args, App)
+  Minutes = minutes_from_args(Args, App)
+  if Minutes is not None:
+    App.attach_minutes(Minutes)
   Server = make_server(App, Args.host, Args.port, cors_origin=Args.cors_origin)
   _print_flush(f"serve host={Args.host} port={Args.port} modes={len(App.cells)} docs={len(App.docs)}")
   Server.serve_forever()
