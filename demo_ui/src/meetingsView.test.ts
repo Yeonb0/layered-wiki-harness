@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Meeting, Task } from './api'
-import { meetingsByDate, monthGrid, taskColumns, workspaceLabel } from './meetingsView'
+import { formatAt, formatRange, isOverdue, localToday, meetingsByDate, monthGrid, taskColumns, workspaceLabel } from './meetingsView'
 
 // 픽스처일 뿐이며 규칙과 무관하다 - 합성 값이다
 function meeting(id: string, startsAt: string): Meeting {
@@ -66,5 +66,49 @@ describe('workspaceLabel', () => {
     expect(workspaceLabel({ layer: '전사', group: null })).toBe('전사')
     expect(workspaceLabel({ layer: '팀', group: '팀1' })).toBe('팀1')
     expect(workspaceLabel({ layer: '개인', group: '팀원E' })).toBe('팀원E')
+  })
+})
+
+describe('formatRange · formatAt', () => {
+  it('같은 날이면 끝에는 시각만 쓴다 ( 2026-10-14 는 수요일 )', () => {
+    expect(formatRange('2026-10-14T14:00', '2026-10-14T15:00')).toBe('2026-10-14 ( 수 ) 14:00 ~ 15:00')
+  })
+
+  it('다른 날이면 끝에도 날짜와 요일을 쓴다', () => {
+    expect(formatRange('2026-10-14T14:00', '2026-10-15T09:00')).toBe('2026-10-14 ( 수 ) 14:00 ~ 2026-10-15 ( 목 ) 09:00')
+  })
+
+  it('일요일과 토요일', () => {
+    expect(formatRange('2026-10-11T10:00', '2026-10-17T10:00')).toBe('2026-10-11 ( 일 ) 10:00 ~ 2026-10-17 ( 토 ) 10:00')
+  })
+
+  it('형식이 다르면 오류다', () => {
+    expect(() => formatRange('2026-10-14 14:00', '2026-10-14T15:00')).toThrow('형식')
+    expect(() => formatRange('2026-10-14T14:00', '내일')).toThrow('형식')
+    expect(() => formatAt('2026-10-23')).toThrow('형식')
+  })
+
+  it('formatAt 은 T 를 공백으로 바꾼다', () => {
+    expect(formatAt('2026-10-23T15:57')).toBe('2026-10-23 15:57')
+  })
+})
+
+describe('isOverdue', () => {
+  const today = '2026-10-23'
+  it('하루 지났고 끝나지 않았으면 true', () => {
+    expect(isOverdue({ due: '2026-10-22', status: 'todo' }, today)).toBe(true)
+    expect(isOverdue({ due: '2026-10-22', status: 'doing' }, today)).toBe(true)
+  })
+
+  it('당일 · 기한 없음 · 완료는 false', () => {
+    expect(isOverdue({ due: '2026-10-23', status: 'todo' }, today)).toBe(false)
+    expect(isOverdue({ due: null, status: 'todo' }, today)).toBe(false)
+    expect(isOverdue({ due: '2026-10-01', status: 'done' }, today)).toBe(false)
+  })
+})
+
+describe('localToday', () => {
+  it('지역 날짜를 YYYY-MM-DD 로 만든다', () => {
+    expect(localToday(new Date(2026, 9, 3, 23, 59))).toBe('2026-10-03')
   })
 })

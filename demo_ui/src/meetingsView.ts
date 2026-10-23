@@ -58,3 +58,37 @@ export function taskColumns(tasks: Task[]): Record<TaskStatus, Task[]> {
 export function workspaceLabel(workspace: Workspace): string {
   return workspace.group ?? workspace.layer
 }
+
+// 사용자 요청 2026-10-23 : 회의 화면 다듬기 ( 간격 · 일시 형식 · Enter 저장 · 기한 지남 · 노트 0개 안내 )
+const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토']
+const MINUTE_TEXT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/
+
+// "2026-10-14T14:00" → { date: "2026-10-14 ( 수 )", time: "14:00" } - 요일은 UTC 로만 계산한다
+function splitMinute(value: string): { date: string; time: string } {
+  const match = MINUTE_TEXT.exec(value)
+  if (!match) throw new Error(`YYYY-MM-DDTHH:MM 형식이 아니다 : ${value}`)
+  const weekday = WEEKDAY_KO[new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))).getUTCDay()]
+  return { date: `${match[1]}-${match[2]}-${match[3]} ( ${weekday} )`, time: `${match[4]}:${match[5]}` }
+}
+
+export function formatRange(starts: string, ends: string): string {
+  const from = splitMinute(starts)
+  const to = splitMinute(ends)
+  return from.date === to.date ? `${from.date} ${from.time} ~ ${to.time}` : `${from.date} ${from.time} ~ ${to.date} ${to.time}`
+}
+
+// "2026-10-23T15:57" → "2026-10-23 15:57"
+export function formatAt(at: string): string {
+  if (!MINUTE_TEXT.test(at)) throw new Error(`YYYY-MM-DDTHH:MM 형식이 아니다 : ${at}`)
+  return at.replace('T', ' ')
+}
+
+// 기한이 오늘보다 앞이고 끝나지 않은 할 일 - 당일은 지난 것이 아니다
+export function isOverdue(task: Pick<Task, 'due' | 'status'>, today: string): boolean {
+  return task.due !== null && task.due < today && task.status !== 'done'
+}
+
+// 브라우저의 지역 날짜 "YYYY-MM-DD"
+export function localToday(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}

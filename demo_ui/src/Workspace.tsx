@@ -125,6 +125,7 @@ export function Workspace({
           view={current.data}
           onOpenNote={openNote}
           onChanged={() => setMeetingVersion((n) => n + 1)}
+          onOtherMode={() => setMode((m) => (m === 'all_layers' ? 'split_by_layer' : 'all_layers'))}
         />
       )
     }

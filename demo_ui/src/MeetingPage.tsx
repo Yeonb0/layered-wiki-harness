@@ -1,4 +1,5 @@
 // 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능. 회의 · 할 일은 서버가 보는 사람별로 거른 것만 그린다. 보는 사람 선택은 인증이 아니다
+// 사용자 요청 2026-10-23 : 회의 화면 다듬기 ( 간격 · 일시 형식 · Enter 저장 · 기한 지남 · 노트 0개 안내 )
 // 회의 상세 탭 - 노션 페이지처럼 제목 · 속성 블록 · 토글. 노트 목록은 지금 보기 ( 서버가 거른 것 ) 안에서만 고른다
 import { useCallback, useEffect, useState } from 'react'
 import {
@@ -7,7 +8,7 @@ import {
 } from './api'
 import { LAYER_COLOR } from './colors'
 import { MeetingForm, MEETING_STATUS_LABEL } from './MeetingForm'
-import { workspaceLabel } from './meetingsView'
+import { formatAt, formatRange, isOverdue, localToday, workspaceLabel } from './meetingsView'
 import { Toggle } from './Toggle'
 
 const TASK_STATUS_LABEL: Record<TaskStatus, string> = { todo: '할 일', doing: '진행 중', done: '완료' }
@@ -44,6 +45,8 @@ export function TaskItem({
 }) {
   const [error, setError] = useState<string | null>(null)
   const [text, setText] = useState('')
+  const [progressError, setProgressError] = useState<string | null>(null)
+  const today = localToday()
   const change = async (fields: Partial<Pick<Task, 'assignee' | 'due' | 'status'>>) => {
     setError(null)
     try {
@@ -54,13 +57,14 @@ export function TaskItem({
     }
   }
   const addNote = async () => {
-    setError(null)
+    setProgressError(null)
     try {
       await addProgress(viewer.viewer_id, task.task_id, text)
+      // 저장에 성공했을 때만 입력칸을 비운다
       setText('')
       onChanged()
     } catch (e) {
-      setError(errorText(e))
+      setProgressError(errorText(e))
     }
   }
   return (
@@ -97,25 +101,35 @@ export function TaskItem({
           기한
           <input type="date" value={task.due ?? ''} onChange={(e) => void change({ due: e.target.value === '' ? null : e.target.value })} />
         </label>
+        {isOverdue(task, today) && <span className="badge overdue">기한 지남</span>}
       </div>
       <ul className="progress-list">
         {task.progress.length === 0 && <li className="muted">진행 기록 없음</li>}
         {task.progress.map((entry, index) => (
           <li key={index}>
             <span className="muted">
-              {entry.author} · {entry.at}
+              {entry.author} · {formatAt(entry.at)}
             </span>{' '}
             {entry.text}
           </li>
         ))}
       </ul>
       {viewer.layer === '개인' ? (
-        <div className="progress-add">
-          <input placeholder="진행 상황 추가" value={text} onChange={(e) => setText(e.target.value)} />
-          <button disabled={text.trim() === ''} onClick={() => void addNote()}>
-            추가
-          </button>
-        </div>
+        <>
+          <form
+            className="progress-add"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (text.trim() !== '') void addNote()
+            }}
+          >
+            <input placeholder="진행 상황 추가" value={text} onChange={(e) => setText(e.target.value)} />
+            <button type="submit" disabled={text.trim() === ''}>
+              추가
+            </button>
+          </form>
+          {progressError && <div className="notice error">{progressError}</div>}
+        </>
       ) : (
         <p className="muted">진행 기록은 개인 보는 사람으로 쓴다</p>
       )}
@@ -129,6 +143,7 @@ export function MeetingPage({
   view,
   onOpenNote,
   onChanged,
+  onOtherMode,
 }: {
   viewer: Viewer
   meetingId: string
@@ -137,6 +152,8 @@ export function MeetingPage({
   onOpenNote: (noteId: string) => void
   // 회의가 바뀌면 탭 제목 · 목록을 다시 불러오게 알린다
   onChanged: () => void
+  // Workspace 의 모드를 바꾼다 - 회의 탭은 그대로 둔다
+  onOtherMode: () => void
 }) {
   const [meeting, setMeeting] = useState<Meeting | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
@@ -174,7 +191,7 @@ export function MeetingPage({
       <dl className="props">
         <dt>일시</dt>
         <dd>
-          {meeting.starts_at} ~ {meeting.ends_at}
+          {formatRange(meeting.starts_at, meeting.ends_at)}
         </dd>
         <dt>워크스페이스</dt>
         <dd>
@@ -223,6 +240,12 @@ export function MeetingPage({
         ) : (
           <>
             <p className="muted">이 보는 사람에게 보이는 노트 {minutesNotes.length}개 ( 서버가 거른 보기 기준 )</p>
+            {view && minutesNotes.length === 0 && (
+              <>
+                <p className="muted">이 모드의 보기에는 이 회의록에서 나온 노트가 없다 ( 배치되지 않았거나 이 보는 사람에게 보이지 않는 층일 수 있다 )</p>
+                <button onClick={onOtherMode}>다른 모드에서 보기</button>
+              </>
+            )}
             {layers.map((layer) => (
               <div key={layer}>
                 <h4 style={{ color: LAYER_COLOR[layer] }}>{layer}</h4>

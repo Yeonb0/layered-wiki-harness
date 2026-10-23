@@ -1546,3 +1546,27 @@ body.resizing {
 .calendar-chip {
   word-break: keep-all;
 }
+
+/* 사용자 요청 2026-10-23 : 회의 화면 다듬기 ( 간격 · 일시 형식 · Enter 저장 · 기한 지남 · 노트 0개 안내 ) */
+.props dd:has(.chip) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.meetings-tab .board-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.board-meta .sep {
+  color: var(--muted);
+}
+
+.badge.overdue {
+  background: #e5484d;
+  color: #fff;
+  font-size: 11px;
+}

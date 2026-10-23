@@ -5,16 +5,11 @@ import { fetchMeetings, fetchTasks, fetchWorkspaces, type Meeting, type Task, ty
 import { LAYER_COLOR } from './colors'
 import { MeetingForm, MEETING_STATUS_LABEL } from './MeetingForm'
 import { errorText, personalName, TaskItem, WorkspaceBadge } from './MeetingPage'
-import { meetingsByDate, monthGrid, TASK_COLUMN_LABEL, taskColumns } from './meetingsView'
+import { formatRange, isOverdue, localToday, meetingsByDate, monthGrid, TASK_COLUMN_LABEL, taskColumns } from './meetingsView'
 
 type Kind = 'list' | 'calendar' | 'tasks'
 const KIND_LABEL: Record<Kind, string> = { list: '목록', calendar: '달력', tasks: '할 일' }
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
-
-function todayText(): string {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-}
 
 export function MeetingsTab({
   viewer,
@@ -36,7 +31,7 @@ export function MeetingsTab({
   const [creating, setCreating] = useState(false)
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
   const [reloads, setReloads] = useState(0)
-  const today = todayText()
+  const today = localToday()
   const [month, setMonth] = useState({ year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) })
   const myName = personalName(viewer)
   const assignee = mine && myName ? myName : undefined
@@ -125,7 +120,7 @@ export function MeetingsTab({
             {meetings.map((meeting) => (
               <tr key={meeting.meeting_id} onClick={() => onOpenMeeting(meeting.meeting_id)}>
                 <td className="db-title">{meeting.title}</td>
-                <td className="mono">{meeting.starts_at.replace('T', ' ')}</td>
+                <td className="mono">{formatRange(meeting.starts_at, meeting.ends_at)}</td>
                 <td>
                   <WorkspaceBadge workspace={meeting.workspace} />
                 </td>
@@ -174,6 +169,7 @@ export function MeetingsTab({
                   <button
                     key={meeting.meeting_id}
                     className="calendar-chip"
+                    title={formatRange(meeting.starts_at, meeting.ends_at)}
                     style={{ borderLeftColor: LAYER_COLOR[meeting.workspace.layer] }}
                     onClick={() => onOpenMeeting(meeting.meeting_id)}
                   >
@@ -204,8 +200,12 @@ export function MeetingsTab({
                     <div className="board-title">{task.title}</div>
                     <div className="board-meta">
                       <span>{task.assignee}</span>
+                      <span className="sep">·</span>
                       <span>{task.due ?? '기한 없음'}</span>
+                      {isOverdue(task, today) && <span className="badge overdue">기한 지남</span>}
+                      <span className="sep">·</span>
                       <WorkspaceBadge workspace={task.workspace} />
+                      <span className="sep">·</span>
                       <span className="muted">기록 {task.progress.length}</span>
                     </div>
                   </div>
