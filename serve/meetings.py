@@ -27,6 +27,12 @@ _TASK_KEYS = ("task_id", "meeting_id", "title", "workspace", "assignee", "due", 
 _MEETING_INPUT = ("title", "starts_at", "ends_at", "workspace", "attendees", "agenda", "minutes_doc_id", "status")
 _TASK_INPUT = ("title", "meeting_id", "workspace", "assignee", "due", "status", "source")
 _TASK_UPDATE = ("title", "assignee", "due", "status")
+# 사용자 결정 2026-10-23 ( 지침 v3.1 · 3절 26 · 27 ) : 회의 문서는 할 일 배정 역할이 낸 결과를 사람이 확정하기 전까지 제안으로 둔다
+DOC_STATUS = ("proposal", "confirmed")
+_DOC_KEYS = (
+  "doc_id", "meeting_id", "workspace", "decisions", "summary", "task_ids", "status", "assign_id", "created_at", "confirmed_by",
+  "confirmed_at",
+)
 _EMPTY = {"version": 1, "meetings": [], "tasks": []}
 
 
@@ -150,6 +156,10 @@ class MeetingStore:
       except ValueError as Error:
         raise ValueError(f"회의 파일의 회의 {row['meeting_id']} 가 규칙에 맞지 않는다: {Error}") from None
       meeting_workspace[row["meeting_id"]] = row["workspace"]
+    # documents 는 선택 키다 - 없으면 빈 목록으로 읽는다
+    documents = self.data.setdefault("documents", [])
+    if not isinstance(documents, list):
+      raise ValueError("회의 파일의 documents 가 목록이 아니다")
     for row in self.data["tasks"]:
       try:
         # source 는 API 로 만들 때만 사람으로 제한한다 - 시작 때는 agent_proposal · agent_confirmed 도 받는다 ( API 는 만들 수 없지만 파일에는 있을 수 있다 )
@@ -164,6 +174,39 @@ class MeetingStore:
         raise ValueError(f"회의 파일의 할 일 {row['task_id']} 가 없는 회의 {meeting_id!r} 에 연결돼 있다 ( 연결 규칙 )")
       if row["workspace"] != meeting_workspace[meeting_id]:
         raise ValueError(f"회의 파일의 할 일 {row['task_id']} 가 다른 workspace 의 회의 {meeting_id} 에 연결돼 있다 ( 연결 규칙 )")
+    task_ids = {row["task_id"] for row in self.data["tasks"]}
+    document_ids = [row.get("doc_id") if isinstance(row, dict) else None for row in documents]
+    if len(set(document_ids)) != len(document_ids):
+      raise ValueError("회의 파일의 documents 에 id 중복이 있다")
+    for row in documents:
+      try:
+        self._check_document(row, meeting_workspace, task_ids)
+      except ValueError as Error:
+        raise ValueError(f"회의 파일의 회의 문서 {row.get('doc_id') if isinstance(row, dict) else row!r} 가 규칙에 맞지 않는다: {Error}") from None
+
+  def _check_document(self, row, meeting_workspace: dict, task_ids: set) -> None:
+    if not isinstance(row, dict) or any(key not in row for key in _DOC_KEYS):
+      raise ValueError("필수 키가 없다")
+    if row["meeting_id"] not in meeting_workspace:
+      raise ValueError("없는 회의에 연결돼 있다")
+    # 회의 문서는 연결한 회의와 같은 워크스페이스여야 한다 - 보기 규칙이 회의와 같다
+    if self._workspace(row["workspace"]) != meeting_workspace[row["meeting_id"]]:
+      raise ValueError("연결한 회의와 workspace 가 다르다")
+    _str_list(row["decisions"], "decisions")
+    if not isinstance(row["summary"], str) or not isinstance(row["assign_id"], str) or not row["assign_id"]:
+      raise ValueError("summary · assign_id 는 문자열이어야 한다")
+    _str_list(row["task_ids"], "task_ids")
+    if any(task_id not in task_ids for task_id in row["task_ids"]):
+      raise ValueError("없는 할 일을 가리킨다")
+    if row["status"] not in DOC_STATUS:
+      raise ValueError(f"알 수 없는 문서 status: {row['status']!r}")
+    _parse_time(row["created_at"], "created_at")
+    if row["status"] == "confirmed":
+      if not isinstance(row["confirmed_by"], str) or not row["confirmed_by"]:
+        raise ValueError("확정한 문서에는 confirmed_by 가 있어야 한다")
+      _parse_time(row["confirmed_at"], "confirmed_at")
+    elif row["confirmed_by"] is not None or row["confirmed_at"] is not None:
+      raise ValueError("제안 문서에는 confirmed_by · confirmed_at 이 없어야 한다")
 
   def _check_progress(self, progress) -> None:
     if not isinstance(progress, list):
@@ -343,7 +386,9 @@ class MeetingStore:
         if not self.can_see(target, checked["workspace"]):
           raise ValueError("볼 수 없는 workspace 로는 옮길 수 없다")
         # 연결된 할 일이 있으면 워크스페이스를 옮길 수 없다 - 할 일은 회의와 같은 워크스페이스여야 한다
-        if any(task["meeting_id"] == meeting_id for task in self.data["tasks"]):
+        if any(task["meeting_id"] == meeting_id for task in self.data["tasks"]) or any(
+          doc["meeting_id"] == meeting_id for doc in self.data["documents"]
+        ):
           raise ValueError("연결된 할 일이 있어 workspace 를 바꿀 수 없다")
       row.update(checked)
       row["updated_at"] = self._now()
@@ -369,6 +414,104 @@ class MeetingStore:
           row["minutes_doc_id"] = None
           self._save()
           return
+
+  # ---- 회의 문서 · 에이전트 제안 할 일 ----
+  def _meeting_row_of(self, meeting_id: str) -> dict:
+    for row in self.data["meetings"]:
+      if row["meeting_id"] == meeting_id:
+        return row
+    raise NotFoundError("회의를 찾을 수 없다")
+
+  def _attendee(self, target, meeting: dict) -> str:
+    # 확정 · 버리기 · 배정 요청은 그 회의의 참석자 ( 개인 보는 사람 ) 만 한다
+    if target[0] != "개인" or self.viewer_name(target) not in meeting["attendees"]:
+      raise ValueError("회의 참석자 ( 개인 보는 사람 ) 만 할 수 있다")
+    return self.viewer_name(target)
+
+  def has_pending_document(self, meeting_id: str) -> bool:
+    with self.lock:
+      return any(doc["meeting_id"] == meeting_id and doc["status"] == "proposal" for doc in self.data["documents"])
+
+  def add_agent_proposal(self, meeting_id: str, result: dict, assign_id: str) -> dict:
+    # 내부 전용 - HTTP 로 source 를 받는 경로는 그대로 사람만 만든다
+    with self.lock:
+      meeting = self._meeting_row_of(meeting_id)
+      checked_rows = []
+      for item in result["tasks_ok"]:
+        due = item["due"] or None
+        checked = self._check_task_fields({
+          "title": item["title"], "workspace": meeting["workspace"], "assignee": item["assignee"], "due": due, "status": "todo",
+          "source": "agent_proposal",
+        })
+        checked_rows.append(checked)
+      parsed = result["parsed"]
+      # 모두 검사를 통과한 뒤에만 쓴다 - 일부만 들어간 제안을 남기지 않는다
+      created = []
+      for checked in checked_rows:
+        row = {"task_id": self._next_id(self.data["tasks"], "task_id", "t"), "meeting_id": meeting_id, **checked, "progress": []}
+        row = {key: row[key] for key in _TASK_KEYS}
+        self.data["tasks"].append(row)
+        created.append(row)
+      document = {
+        "doc_id": self._next_id(self.data["documents"], "doc_id", "d"), "meeting_id": meeting_id, "workspace": meeting["workspace"],
+        "decisions": list(parsed["decisions"]), "summary": parsed["summary"], "task_ids": [row["task_id"] for row in created],
+        "status": "proposal", "assign_id": assign_id, "created_at": self._now(), "confirmed_by": None, "confirmed_at": None,
+      }
+      self.data["documents"].append(document)
+      self._save()
+      return {"document": json.loads(json.dumps(document)), "tasks": [self._task_row(row) for row in created]}
+
+  def _visible_document(self, target, doc_id: str) -> dict:
+    for row in self.data["documents"]:
+      if row["doc_id"] == doc_id and self.can_see(target, row["workspace"]):
+        return row
+    raise NotFoundError("회의 문서를 찾을 수 없다")
+
+  def list_documents(self, target, meeting_id=None) -> list:
+    with self.lock:
+      rows = [row for row in self.data["documents"] if self.can_see(target, row["workspace"])]
+      if meeting_id is not None:
+        rows = [row for row in rows if row["meeting_id"] == meeting_id]
+      return [json.loads(json.dumps(row)) for row in sorted(rows, key=lambda r: (r["created_at"], r["doc_id"]))]
+
+  def confirm_task(self, target, task_id: str) -> dict:
+    with self.lock:
+      row = self._visible_task(target, task_id)
+      self._attendee(target, self._meeting_row_of(row["meeting_id"]))
+      if row["source"] != "agent_proposal":
+        raise ValueError("에이전트 제안 상태의 할 일만 확정한다")
+      row["source"] = "agent_confirmed"
+      self._save()
+      return self._task_row(row)
+
+  def discard_task(self, target, task_id: str) -> dict:
+    with self.lock:
+      row = self._visible_task(target, task_id)
+      self._attendee(target, self._meeting_row_of(row["meeting_id"]))
+      # 사람이 만든 할 일과 이미 확정한 할 일은 버리지 않는다
+      if row["source"] != "agent_proposal":
+        raise ValueError("에이전트 제안 상태의 할 일만 버린다")
+      self.data["tasks"].remove(row)
+      for doc in self.data["documents"]:
+        if task_id in doc["task_ids"]:
+          doc["task_ids"].remove(task_id)
+      self._save()
+      return {"ok": True, "task_id": task_id}
+
+  def confirm_document(self, target, doc_id: str) -> dict:
+    with self.lock:
+      doc = self._visible_document(target, doc_id)
+      name = self._attendee(target, self._meeting_row_of(doc["meeting_id"]))
+      if doc["status"] != "proposal":
+        raise ValueError("제안 상태의 회의 문서만 확정한다")
+      remaining = [row for row in self.data["tasks"] if row["task_id"] in doc["task_ids"] and row["source"] == "agent_proposal"]
+      if remaining:
+        raise ValueError("할 일을 먼저 확정하거나 버린다")
+      doc["status"] = "confirmed"
+      doc["confirmed_by"] = name
+      doc["confirmed_at"] = self._now()
+      self._save()
+      return json.loads(json.dumps(doc))
 
   # ---- 할 일 ----
   def list_tasks(self, target, meeting_id=None, assignee=None) -> list:

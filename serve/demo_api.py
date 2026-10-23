@@ -29,6 +29,7 @@ from runner.v2_sequential import (
   git_head_commit,
   load_source_docs,
 )
+from serve.assign import ASSIGN_PROMPT_VERSION, AssignOutputError, append_log, run_assign
 from serve.meetings import AlreadyLinkedError, MeetingStore, NotFoundError
 from serve.minutes import TEXT_MAX_CHARS, ConflictError, MinutesStore, source_doc_of
 
@@ -59,7 +60,17 @@ _MINUTES_PATH = "/minutes"
 _PROPOSAL_PATH = re.compile(r"/proposals(?:/(901[0-9]{29})(/decide|/trace)?)?")
 # 회의록 본문은 20000자까지이고 JSON 이스케이프로 한 글자가 6바이트까지 늘 수 있다
 MINUTES_MAX_BODY_BYTES = TEXT_MAX_CHARS * 6 + MAX_BODY_BYTES
-_TASK_PATH = re.compile(r"/tasks(?:/([a-z0-9]{1,40})(/progress)?)?")
+_TASK_PATH = re.compile(r"/tasks(?:/([a-z0-9]{1,40})(/progress|/confirm|/discard)?)?")
+# 사용자 결정 2026-10-23 ( 지침 v3.1 · 3절 26 · 27 ) : 할 일 배정 · 회의 문서 생성은 분해 · 배치 에이전트와 분리된 별도 역할이다
+_ASSIGN_PATH = re.compile(r"/meetings/([a-z0-9]{1,40})/assign")
+_MEETING_DOC_PATH = re.compile(r"/meeting-docs(?:/([a-z0-9]{1,40})(/confirm))?")
+
+
+def _is_meetings_path(Path: str) -> bool:
+  return bool(
+    _MEETING_PATH.fullmatch(Path) or _TASK_PATH.fullmatch(Path) or _ASSIGN_PATH.fullmatch(Path) or _MEETING_DOC_PATH.fullmatch(Path)
+  )
+
 _WAIT_VALUE = re.compile(r"[0-9]+")
 # 본문 읽기에 실패해 이미 응답을 보냈다는 표지
 _BAD_BODY = object()
@@ -163,6 +174,9 @@ class DemoApp:
     # 회의록 저장소 - None 이면 회의록 경로는 모두 503 이다
     self.minutes = None
     self.decide_lock = threading.Lock()
+    # 할 일 배정 작업 기록 ( 메모리 ) - 배정 로그는 회의록 폴더의 assign_log.jsonl 에 남는다
+    self.assigns = {}
+    self.last_assign = {}
     self.print_fn = print_fn
     self.work_root = work_root
     self.base_run = os.path.basename(os.path.normpath(run_dir))
@@ -598,7 +612,9 @@ class DemoApp:
     Match = _MEETING_PATH.fullmatch(path)
     Task = _TASK_PATH.fullmatch(path)
     Spaces = path == _WORKSPACE_PATH
-    if Match is None and Task is None and not Spaces:
+    Assign = _ASSIGN_PATH.fullmatch(path)
+    Docs = _MEETING_DOC_PATH.fullmatch(path)
+    if Match is None and Task is None and not Spaces and Assign is None and Docs is None:
       return 404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"}
     try:
       # 모든 경로에 viewer 가 필수이고 목록에 없는 보는 사람은 400 이다
@@ -625,6 +641,23 @@ class DemoApp:
         if method != "GET" or Params:
           raise ValueError("워크스페이스 목록은 viewer 만 받는 GET 이다")
         return 200, self._mask({"workspaces": Store.list_workspaces(Target)})
+      if Assign is not None:
+        if method == "GET":
+          if Params:
+            raise ValueError(f"모르는 쿼리: {sorted(Params)}")
+          return 200, self._mask(self._assign_status(Target, Assign.group(1)))
+        if Params:
+          raise ValueError("배정 요청 본문은 { viewer } 뿐이다")
+        Status, Body = self._assign_start(Target, Assign.group(1))
+        return Status, self._mask(Body)
+      if Docs is not None:
+        if Docs.group(1) is None:
+          if method != "GET" or set(Params) - {"meeting"}:
+            raise ValueError("회의 문서 목록은 viewer 와 meeting 만 받는 GET 이다")
+          return 200, self._mask({"documents": Store.list_documents(Target, Params.get("meeting"))})
+        if method != "POST" or Params:
+          raise ValueError("회의 문서 확정은 { viewer } 뿐인 POST 다")
+        return 200, self._mask(Store.confirm_document(Target, Docs.group(1)))
       if Match is not None:
         MeetingId = Match.group(1)
         if method == "GET" and MeetingId is None:
@@ -650,6 +683,10 @@ class DemoApp:
         return 200, self._mask({"tasks": Store.list_tasks(Target, Params.get("meeting"), Params.get("assignee"))})
       if TaskId is None:
         return 201, self._mask(Store.create_task(Target, Params))
+      if Progress in ("/confirm", "/discard"):
+        if Params:
+          raise ValueError("확정 · 버리기 본문은 { viewer } 뿐이다")
+        return 200, self._mask(Store.confirm_task(Target, TaskId) if Progress == "/confirm" else Store.discard_task(Target, TaskId))
       if Progress:
         _only_keys = set(Params) - {"text"}
         if _only_keys or "text" not in Params:
@@ -660,6 +697,98 @@ class DemoApp:
       return 404, {"ok": False, "error_type": "NotFound", "message": str(Error)}
     except ValueError as Error:
       return 400, self._mask({"ok": False, "error_type": "BadRequest", "message": str(Error)})
+
+  # ---- 할 일 배정 · 회의 문서 생성 ( 별도 역할 ) ----
+  def _assign_status(self, Target, MeetingId: str) -> dict:
+    # 회의를 볼 수 없으면 없는 회의와 같은 404 다
+    self.meetings.get_meeting(Target, MeetingId)
+    AssignId = self.last_assign.get(MeetingId)
+    if AssignId is None:
+      raise NotFoundError("배정 작업이 없다")
+    Rec = self.assigns[AssignId]
+    # 버려진 할 일은 제목 · 이유만 내보낸다
+    return {
+      "assign_id": AssignId, "status": Rec["status"], "error": Rec["error"], "tasks_dropped": len(Rec["dropped"]),
+      "dropped": list(Rec["dropped"]), "problems": list(Rec["problems"]),
+    }
+
+  def _assign_start(self, Target, MeetingId: str) -> tuple:
+    if self.minutes is None:
+      return 503, {"ok": False, "error_type": "MinutesNotConfigured", "message": "회의록 투입이 설정되지 않았다"}
+    Meeting = self.meetings.get_meeting(Target, MeetingId)
+    Name = self.meetings.viewer_name(Target)
+    if Target[0] != "개인" or Name not in Meeting["attendees"]:
+      raise ValueError("회의 참석자 ( 개인 보는 사람 ) 만 배정을 요청한다")
+    Record = self.minutes.get(Meeting["minutes_doc_id"]) if Meeting["minutes_doc_id"] else None
+    if Record is None or Record["status"] != "decided":
+      raise ValueError("승인이 끝난 ( decided ) 회의록이 연결돼 있어야 한다")
+    Pending = (409, {"ok": False, "error_type": "AssignPending", "message": "확정하지 않은 회의 문서가 있다"})
+    if self.meetings.has_pending_document(MeetingId):
+      return Pending
+    AssignId = uuid.uuid4().hex
+    Rec = {
+      "assign_id": AssignId, "meeting_id": MeetingId, "status": "running", "error": None, "dropped": [], "problems": [],
+      "event": threading.Event(),
+    }
+    with self.meta_lock:
+      # 생성 서버 슬롯은 하나다 - 기존 작업 잠금을 같이 쓴다
+      if not self.lock.acquire(blocking=False):
+        return 409, {"ok": False, "error_type": "Busy", "message": "다른 요청을 처리 중이다"}
+      Started = False
+      try:
+        if self.meetings.has_pending_document(MeetingId):
+          return Pending
+        self.assigns[AssignId] = Rec
+        self.last_assign[MeetingId] = AssignId
+        Thread = threading.Thread(target=self._assign_main, args=(Rec, Meeting, Record), daemon=True)
+        try:
+          Thread.start()
+        except BaseException:
+          del self.assigns[AssignId]
+          self.last_assign.pop(MeetingId, None)
+          raise
+        Started = True
+      finally:
+        if not Started:
+          self.lock.release()
+    return 202, {"ok": True, "assign_id": AssignId}
+
+  def _assign_main(self, Rec: dict, Meeting: dict, Record: dict) -> None:
+    Entry = {
+      "assign_id": Rec["assign_id"], "meeting_id": Rec["meeting_id"], "doc_id": Record["doc_id"],
+      "prompt_version": ASSIGN_PROMPT_VERSION, "model_id": self.model_id, "seed": self.gen_seed, "raw_sha256": Record["raw_sha256"],
+      "started_at": _utc_now(), "ended_at": None, "raw_output": None, "parsed": None, "tasks_dropped": [], "problems": [], "error": None,
+    }
+    try:
+      try:
+        Result = run_assign(Meeting, Record, self.chat_fn, self.model_id, self.gen_seed, self.timeout_seconds)
+        Entry.update(raw_output=Result["raw_output"], parsed=Result["parsed"], tasks_dropped=Result["tasks_dropped"], problems=Result["problems"])
+        self.meetings.add_agent_proposal(Rec["meeting_id"], Result, Rec["assign_id"])
+      except AssignOutputError as Error:
+        Entry["raw_output"] = Error.raw_output
+        Entry["error"] = f"AssignOutputError : {Error}"
+      except Exception as Error:
+        Entry["error"] = f"{type(Error).__name__} : {Error}"
+      Entry["ended_at"] = _utc_now()
+      try:
+        append_log(self.minutes.dir_path, Entry)
+      except OSError as Error:
+        Entry["error"] = Entry["error"] or f"LogWriteFailed : {Error}"
+      Rec["dropped"] = [
+        {"title": Item["task"].get("title") if isinstance(Item["task"], dict) else None, "reason": Item["reason"]}
+        for Item in Entry["tasks_dropped"]
+      ]
+      Rec["problems"] = list(Entry["problems"])
+      Rec["error"] = Entry["error"]
+      Rec["status"] = "failed" if Entry["error"] else "done"
+    except BaseException as Error:
+      Rec["status"] = "failed"
+      Rec["error"] = f"{type(Error).__name__} : {Error}"
+      raise
+    finally:
+      with self.meta_lock:
+        self.lock.release()
+      Rec["event"].set()
 
   # ---- 회의록 투입 · 승인 게이트 · 판정 기록 보기 ----
   def attach_minutes(self, Store: MinutesStore) -> None:
@@ -1143,7 +1272,7 @@ def make_handler(App: DemoApp, cors_origin=None):
       elif urlsplit(self.path).path == "/live":
         Status, Obj = App.live_status()
         self._send(Status, Obj)
-      elif _MEETING_PATH.fullmatch(urlsplit(self.path).path) or _TASK_PATH.fullmatch(urlsplit(self.path).path) or urlsplit(self.path).path == _WORKSPACE_PATH:
+      elif _is_meetings_path(urlsplit(self.path).path) or urlsplit(self.path).path == _WORKSPACE_PATH:
         Parts = urlsplit(self.path)
         Status, Obj = App.meetings_request("GET", Parts.path, parse_qs(Parts.query, keep_blank_values=True), None)
         self._send(Status, Obj)
@@ -1204,7 +1333,7 @@ def make_handler(App: DemoApp, cors_origin=None):
 
     def do_POST(self) -> None:
       Path = urlsplit(self.path).path
-      if self.path == Path and (_MEETING_PATH.fullmatch(Path) or _TASK_PATH.fullmatch(Path)):
+      if self.path == Path and _is_meetings_path(Path):
         Body = self._read_json_body()
         if Body is _BAD_BODY:
           return
