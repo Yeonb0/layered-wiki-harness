@@ -38,6 +38,7 @@ export default function App() {
     <Workspace
       key={viewer.viewer_id}
       viewer={viewer}
+      viewers={viewers.viewers}
       showNames={viewers.show_names}
       baseRun={baseRun}
       onChangeViewer={() => setViewerId(null)}

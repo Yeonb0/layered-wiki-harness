@@ -1,7 +1,10 @@
 // 사용자 결정 2026-10-23 : 가운데 탭 상태 - 대시보드 · 그래프는 고정 탭, 노트 탭은 여러 개 열고 닫는다
 export const DASHBOARD_TAB = 'dashboard'
 export const GRAPH_TAB = 'graph'
-const FIXED_TABS = [DASHBOARD_TAB, GRAPH_TAB]
+export const COMPARE_VIEWER_TAB = 'compare-viewer'
+export const COMPARE_MODE_TAB = 'compare-mode'
+// 고정 탭 순서 : 대시보드, 그래프, 보는 사람 비교, 모드 비교
+const FIXED_TABS = [DASHBOARD_TAB, GRAPH_TAB, COMPARE_VIEWER_TAB, COMPARE_MODE_TAB]
 
 export type TabState = { tabs: string[]; active: string }
 

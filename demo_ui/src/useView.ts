@@ -2,13 +2,15 @@
 import { useEffect, useState } from 'react'
 import { fetchView, type Mode, type ViewResponse } from './api'
 
-export function useView(mode: Mode, viewerId: string): { data: ViewResponse | null; error: string | null } {
+// viewerId 가 null 이면 요청하지 않는다 - 비교할 보는 사람을 고르기 전 상태
+export function useView(mode: Mode, viewerId: string | null): { data: ViewResponse | null; error: string | null } {
   const [data, setData] = useState<ViewResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
     setData(null)
     setError(null)
+    if (viewerId === null) return
     fetchView(mode, viewerId)
       .then((response) => {
         if (!cancelled) setData(response)

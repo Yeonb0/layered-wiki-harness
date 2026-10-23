@@ -2,16 +2,33 @@
 import type { ViewNote } from './api'
 import { bodyLines } from './body'
 import { LAYER_COLOR } from './colors'
+import { classifyMarker, findMarkers, MARKER_KIND_LABEL, splitByMarkers } from './markers'
 
 export function NoteReader({
   note,
   titles,
+  showNames,
   onOpenNote,
 }: {
   note: ViewNote
   titles: Map<string, string>
+  showNames: boolean
   onOpenNote: (noteId: string) => void
 }) {
+  // 본문이 가려진 실행에서는 표지를 찾지 않는다 - 가린 문구에서 표지가 나올 수 없다
+  const markerHits = showNames ? findMarkers(note) : []
+  const marked = (text: string) =>
+    showNames
+      ? splitByMarkers(text).map((piece, index) =>
+          piece.marker ? (
+            <mark key={index} className={`mk mk-${classifyMarker(note, piece.marker)}`} title={MARKER_KIND_LABEL[classifyMarker(note, piece.marker)]}>
+              {piece.text}
+            </mark>
+          ) : (
+            <span key={index}>{piece.text}</span>
+          ),
+        )
+      : text
   const chips = (ids: string[]) =>
     ids.length === 0 ? (
       <span className="muted">없음</span>
@@ -44,16 +61,27 @@ export function NoteReader({
         </dd>
         <dt>inserted_at_vault_size</dt>
         <dd>{note.inserted_at_vault_size}</dd>
+        <dt>표지</dt>
+        <dd>
+          {!showNames && <span className="muted">판정하지 않음 ( 본문이 가려진 실행 )</span>}
+          {showNames && markerHits.length === 0 && '없음'}
+          {markerHits.map((hit) => (
+            <div key={hit.marker.text}>
+              {`${hit.marker.text} × ${hit.count} · `}
+              <span className={`kind kind-${hit.kind}`}>{MARKER_KIND_LABEL[hit.kind]}</span>
+            </div>
+          ))}
+        </dd>
       </dl>
       <div className="body">
         {bodyLines(note.body).map((line, index) =>
           line.kind === 'heading' ? (
             <div key={index} className="sub">
-              {line.text}
+              {marked(line.text)}
             </div>
           ) : (
             <div key={index} className="line">
-              {line.text || ' '}
+              {line.text ? marked(line.text) : ' '}
             </div>
           ),
         )}

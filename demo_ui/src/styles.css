@@ -608,3 +608,141 @@ button.link {
   width: 28px;
   text-align: right;
 }
+
+/* 누출 표지 강조 : 다크 배경에서 대비가 나게 판정마다 색을 달리한다 */
+mark.mk {
+  padding: 0 3px;
+  border-radius: 3px;
+  color: #e0e0e0;
+}
+
+mark.mk-up {
+  background: rgba(255, 92, 92, 0.38);
+  border-bottom: 2px solid #ff5c5c;
+}
+
+mark.mk-cross {
+  background: rgba(255, 159, 67, 0.32);
+  border-bottom: 2px solid #ff9f43;
+}
+
+mark.mk-home {
+  background: none;
+  border: 1px solid #8a8a8a;
+}
+
+mark.mk-down {
+  background: none;
+  border: 1px solid #4aa3ff;
+  color: #9cc9ff;
+}
+
+.kind {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.kind-up {
+  background: rgba(255, 92, 92, 0.3);
+  color: #ffb0b0;
+}
+
+.kind-cross {
+  background: rgba(255, 159, 67, 0.28);
+  color: #ffd0a0;
+}
+
+.kind-home {
+  border: 1px solid #8a8a8a;
+  color: #b8b8b8;
+}
+
+.kind-down {
+  border: 1px solid #4aa3ff;
+  color: #9cc9ff;
+}
+
+/* 비교 화면 */
+.cmp {
+  padding: 20px 24px;
+}
+
+.cmp h1 {
+  margin-top: 0;
+  font-size: 22px;
+}
+
+.cmp-cols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.cmp-col {
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.cmp-col h3 {
+  margin: 0 0 8px;
+}
+
+.cmp-col .count {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.cmp-layer {
+  margin-top: 10px;
+}
+
+.cmp-layer ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.gray {
+  color: #7a7a7a;
+}
+
+.mk-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.mk-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.mk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mk-table th,
+.mk-table td {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.mk-table th {
+  background: var(--panel);
+}
+
+.mk-item {
+  margin-bottom: 6px;
+}
