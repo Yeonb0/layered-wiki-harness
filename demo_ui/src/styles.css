@@ -1320,3 +1320,39 @@ body.resizing {
   gap: 12px;
   margin-top: 4px;
 }
+
+/* 패널 접기 : 접힌 패널은 칸 폭 0 + overflow hidden 으로 감춘다 ( 펼침 상태 · 스크롤 위치 유지 ) */
+.sidebar,
+.connections {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.shell[data-sidebar-collapsed='true'] .sidebar,
+.shell[data-connections-collapsed='true'] .connections {
+  visibility: hidden;
+  border: none;
+  padding: 0;
+}
+
+.resizer.collapsed {
+  cursor: pointer;
+}
+
+.resizer.collapsed:hover::after,
+.resizer.collapsed:focus-visible::after {
+  background: #a88bfa;
+  width: 2px;
+}
+
+.ribbon button[aria-pressed='true'],
+.status button[aria-pressed='true'] {
+  background: #3a3a55;
+  border-color: #7c7cc0;
+}
+
+.status-toggle {
+  margin-left: auto;
+  padding: 1px 10px;
+  font-size: 12px;
+}

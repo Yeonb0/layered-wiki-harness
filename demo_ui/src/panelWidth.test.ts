@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampWidth, parseWidths, PANEL_LIMITS } from './panelWidth'
+import { clampWidth, COLLAPSE_SNAP, parsePanelState, parseWidths, PANEL_LIMITS, shouldCollapse, type PanelState } from './panelWidth'
 
 describe('clampWidth', () => {
   it('min 아래는 min, max 위는 max 로 맞춘다', () => {
@@ -52,5 +52,50 @@ describe('parseWidths', () => {
       sidebar: PANEL_LIMITS.sidebar.min,
       connections: PANEL_LIMITS.connections.max,
     })
+  })
+})
+
+describe('shouldCollapse', () => {
+  it('min 에서 COLLAPSE_SNAP 만큼 아래로 내려가야 접힌다 ( 경계 포함하지 않음 )', () => {
+    const min = PANEL_LIMITS.sidebar.min
+    expect(shouldCollapse('sidebar', min - COLLAPSE_SNAP)).toBe(false)
+    expect(shouldCollapse('sidebar', min - COLLAPSE_SNAP - 1)).toBe(true)
+    expect(shouldCollapse('sidebar', min)).toBe(false)
+    expect(shouldCollapse('connections', PANEL_LIMITS.connections.min - COLLAPSE_SNAP - 1)).toBe(true)
+  })
+
+  it('넓은 값은 접지 않는다', () => {
+    expect(shouldCollapse('sidebar', 5000)).toBe(false)
+  })
+})
+
+describe('parsePanelState', () => {
+  const initialWidths = { sidebar: PANEL_LIMITS.sidebar.initial, connections: PANEL_LIMITS.connections.initial }
+  const open = { sidebar: false, connections: false }
+
+  it('null · 깨진 JSON 이면 초기 상태이고 접힘은 모두 false 다', () => {
+    expect(parsePanelState(null)).toEqual({ widths: initialWidths, collapsed: open })
+    expect(parsePanelState('{깨짐')).toEqual({ widths: initialWidths, collapsed: open })
+  })
+
+  it('예전 형식 ( 폭만 든 객체 ) 을 읽고 접힘은 모두 false 다', () => {
+    expect(parsePanelState('{"sidebar": 333, "connections": 410}')).toEqual({ widths: { sidebar: 333, connections: 410 }, collapsed: open })
+  })
+
+  it('새 형식은 저장한 그대로 왕복한다', () => {
+    const state: PanelState = { widths: { sidebar: 300, connections: 350 }, collapsed: { sidebar: true, connections: false } }
+    expect(parsePanelState(JSON.stringify(state))).toEqual(state)
+  })
+
+  it('새 형식에서도 범위 밖 폭은 범위 안으로 맞춘다', () => {
+    const raw = JSON.stringify({ widths: { sidebar: 1, connections: 99999 }, collapsed: {} })
+    expect(parsePanelState(raw).widths).toEqual({ sidebar: PANEL_LIMITS.sidebar.min, connections: PANEL_LIMITS.connections.max })
+  })
+
+  it('collapsed 가 boolean 이 아니면 그 칸은 false 다', () => {
+    const raw = JSON.stringify({ widths: {}, collapsed: { sidebar: 'true', connections: 1 } })
+    expect(parsePanelState(raw).collapsed).toEqual(open)
+    expect(parsePanelState(JSON.stringify({ widths: {}, collapsed: 'yes' })).collapsed).toEqual(open)
+    expect(parsePanelState(JSON.stringify({ widths: {} })).collapsed).toEqual(open)
   })
 })

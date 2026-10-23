@@ -9,7 +9,7 @@ import { Dashboard } from './Dashboard'
 import { GraphTab } from './GraphTab'
 import { LiveTab } from './LiveTab'
 import { NoteReader } from './NoteReader'
-import { loadWidths, saveWidths, type Panel, type Widths } from './panelWidth'
+import { loadPanelState, savePanelState, type Panel, type PanelState } from './panelWidth'
 import { Resizer } from './Resizer'
 import { MODE_LABEL, Sidebar } from './Sidebar'
 import {
@@ -42,16 +42,33 @@ export function Workspace({
   const current = views[mode]
   const [tabs, setTabs] = useState<TabState>(INITIAL_TABS)
   const [showSameLayer, setShowSameLayer] = useState(true)
-  // 탐색기 · 연결 패널 폭 - 끌기를 마칠 때 최신 값을 저장하려고 ref 에도 둔다 ( 오래된 값 저장 금지 )
-  const [widths, setWidths] = useState<Widths>(loadWidths)
-  const widthsRef = useRef(widths)
-  widthsRef.current = widths
-  const changeWidth = useCallback((panel: Panel, px: number) => {
-    // 키보드는 바꾼 직후 바로 저장하므로 ref 도 함께 갱신해 같은 틱의 저장이 새 값을 쓰게 한다
-    widthsRef.current = { ...widthsRef.current, [panel]: px }
-    setWidths(widthsRef.current)
+  // 탐색기 · 연결 패널의 폭과 접힘 - 저장할 때 최신 값을 쓰려고 ref 에도 둔다 ( 오래된 값 저장 금지 )
+  const [panels, setPanels] = useState<PanelState>(loadPanelState)
+  const panelsRef = useRef(panels)
+  panelsRef.current = panels
+  const updatePanels = useCallback((next: PanelState, save: boolean) => {
+    // 키보드 · 접기는 바꾼 직후 바로 저장하므로 ref 도 함께 갱신해 같은 틱의 저장이 새 값을 쓰게 한다
+    panelsRef.current = next
+    setPanels(next)
+    if (save) savePanelState(next)
   }, [])
-  const commitWidths = useCallback(() => saveWidths(widthsRef.current), [])
+  const changeWidth = useCallback(
+    (panel: Panel, px: number) => {
+      const current = panelsRef.current
+      updatePanels({ ...current, widths: { ...current.widths, [panel]: px } }, false)
+    },
+    [updatePanels],
+  )
+  const commitPanels = useCallback(() => savePanelState(panelsRef.current), [])
+  // 접어도 widths 는 그대로 두어 펼 때 마지막 폭으로 돌아온다
+  const setCollapsed = useCallback(
+    (panel: Panel, collapsed: boolean) => {
+      const current = panelsRef.current
+      updatePanels({ ...current, collapsed: { ...current.collapsed, [panel]: collapsed } }, true)
+    },
+    [updatePanels],
+  )
+  const columnWidth = (panel: Panel) => (panels.collapsed[panel] ? 0 : panels.widths[panel])
   const [graphSelected, setGraphSelected] = useState<string | null>(null)
 
   const notes = current.data?.notes ?? null
@@ -130,10 +147,16 @@ export function Workspace({
   return (
     <div
       className="shell"
-      style={{ gridTemplateColumns: `76px ${widths.sidebar}px 6px minmax(0, 1fr) 6px ${widths.connections}px` }}
+      // 접힌 패널 칸은 0px 이고 손잡이 6px 칸은 남긴다 - 접힌 패널은 없애지 않고 칸 폭 0 + overflow hidden 으로 감춰 펼침 상태 · 스크롤 위치를 유지한다
+      data-sidebar-collapsed={panels.collapsed.sidebar}
+      data-connections-collapsed={panels.collapsed.connections}
+      style={{ gridTemplateColumns: `76px ${columnWidth('sidebar')}px 6px minmax(0, 1fr) 6px ${columnWidth('connections')}px` }}
     >
       <aside className="ribbon">
         <div className="ribbon-top">
+          <button aria-pressed={!panels.collapsed.sidebar} onClick={() => setCollapsed('sidebar', !panels.collapsed.sidebar)}>
+            탐색기
+          </button>
           <button className={tabs.active === DASHBOARD_TAB ? 'on' : ''} onClick={() => setTabs((s) => activate(s, DASHBOARD_TAB))}>
             대시보드
           </button>
@@ -159,7 +182,16 @@ export function Workspace({
         <button onClick={onChangeViewer}>보는 사람 바꾸기</button>
       </aside>
       <Sidebar viewer={viewer} mode={mode} onMode={setMode} notes={notes} activeNoteId={activeNoteId} onOpenNote={openNote} />
-      <Resizer panel="sidebar" width={widths.sidebar} direction={1} onChange={(px) => changeWidth('sidebar', px)} onCommit={commitWidths} />
+      <Resizer
+        panel="sidebar"
+        width={panels.widths.sidebar}
+        direction={1}
+        onChange={(px) => changeWidth('sidebar', px)}
+        onCommit={commitPanels}
+        collapsed={panels.collapsed.sidebar}
+        onCollapse={() => setCollapsed('sidebar', true)}
+        onExpand={() => setCollapsed('sidebar', false)}
+      />
       <main className="center">
         <div className="tabbar">
           {tabs.tabs.map((key) => (
@@ -179,10 +211,13 @@ export function Workspace({
       </main>
       <Resizer
         panel="connections"
-        width={widths.connections}
+        width={panels.widths.connections}
         direction={-1}
         onChange={(px) => changeWidth('connections', px)}
-        onCommit={commitWidths}
+        onCommit={commitPanels}
+        collapsed={panels.collapsed.connections}
+        onCollapse={() => setCollapsed('connections', true)}
+        onExpand={() => setCollapsed('connections', false)}
       />
       <aside className="connections">
         <h3>연결</h3>
@@ -223,6 +258,13 @@ export function Workspace({
             </button>
           </span>
         )}
+        <button
+          className="status-toggle"
+          aria-pressed={!panels.collapsed.connections}
+          onClick={() => setCollapsed('connections', !panels.collapsed.connections)}
+        >
+          연결 패널
+        </button>
       </footer>
     </div>
   )
