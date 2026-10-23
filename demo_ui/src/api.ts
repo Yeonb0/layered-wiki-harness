@@ -318,3 +318,84 @@ export function updateTask(
 export function addProgress(viewer: string, taskId: string, text: string): Promise<Task> {
   return meetingsRequest<Task>('POST', `/tasks/${taskId}/progress`, { viewer, text })
 }
+
+// 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 회의록 투입 ( 차수 901 ) → 에이전트 분해 · 배치 → 참석자가 노트별 승인 / 반려 → 승인된 노트만 볼트에 겹친다
+// 아래 타입의 키는 serve/demo_api.py 의 응답 코드 ( _proposal_list · _proposal_detail · _trace · _decide ) 그대로다
+export type ProposalStatus = 'running' | 'awaiting_approval' | 'decided' | 'failed'
+
+export type ProposalSummary = {
+  doc_id: string
+  meeting_id: string
+  mode: Mode
+  status: ProposalStatus
+  note_count: number
+  approved: number
+  rejected: number
+  pending: number
+}
+
+export type NoteDecision = { decision: 'approve' | 'reject'; by: string; at: string }
+
+// 배치에 실패한 노트는 layer · group_label · body 가 null 이다 ( 서버 응답에 note_id 는 없다 )
+export type ProposalNote = {
+  note_index: number
+  title: string | null
+  layer: string | null
+  group_label: string | null
+  body: string | null
+  source_segment_ids: string[]
+  upward_links: string[]
+  downward_links: { target_id: string; target_layer: string }[]
+  hidden_links: number
+  problems: string[]
+  decision: NoteDecision | null
+}
+
+export type Proposal = ProposalSummary & { error: string | null; notes: ProposalNote[] }
+
+export type TraceCandidate = { id: string; layer: string; group_label: string | null; title: string }
+
+export type TracePlace = {
+  note_index: number
+  layer: string | null
+  upward_links: string[]
+  downward_links: string[]
+  hidden_links: number
+  problems: string[]
+  candidates: TraceCandidate[]
+  hidden_candidates: number
+  rationale: string | null
+  rationale_hidden: boolean
+}
+
+export type Trace = {
+  doc_id: string
+  meeting_id: string
+  mode: Mode
+  decompose: { ok: boolean; error: string | null; notes: { note_index: number; title: string; segment_ids: string[] }[] }
+  places: TracePlace[]
+}
+
+export function submitMinutes(viewer: string, meetingId: string, mode: Mode, text: string): Promise<{ ok: true; doc_id: string; job_id: string }> {
+  return meetingsRequest('POST', '/minutes', { viewer, meeting_id: meetingId, mode, text })
+}
+
+export async function fetchProposals(viewer: string): Promise<ProposalSummary[]> {
+  return (await meetingsRequest<{ proposals: ProposalSummary[] }>('GET', withQuery('/proposals', { viewer }))).proposals
+}
+
+export function fetchProposal(viewer: string, docId: string): Promise<Proposal> {
+  return meetingsRequest<Proposal>('GET', withQuery(`/proposals/${docId}`, { viewer }))
+}
+
+export function fetchTrace(viewer: string, docId: string): Promise<Trace> {
+  return meetingsRequest<Trace>('GET', withQuery(`/proposals/${docId}/trace`, { viewer }))
+}
+
+export function decideProposal(
+  viewer: string,
+  docId: string,
+  decisions: { note_index: number; decision: 'approve' | 'reject' }[],
+): Promise<{ ok: true; doc_id: string; status: ProposalStatus; approved: number; rejected: number; pending: number }> {
+  return meetingsRequest('POST', `/proposals/${docId}/decide`, { viewer, decisions })
+}

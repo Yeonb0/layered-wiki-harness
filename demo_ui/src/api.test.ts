@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   addProgress, ApiError, createMeeting, createTask, fetchDocs, fetchHealth, fetchJob, fetchLive, fetchMeetings, fetchTasks, fetchView,
-  fetchViewers, fetchWorkspaces, postLive, updateMeeting, updateTask,
+  decideProposal, fetchProposal, fetchProposals, fetchTrace, fetchViewers, fetchWorkspaces, postLive, submitMinutes, updateMeeting, updateTask,
 } from './api'
 
 // 픽스처일 뿐이며 규칙과 무관하다 - fetch 를 가짜로 바꿔 URL 만 확인한다
@@ -172,5 +172,45 @@ describe('회의 api', () => {
     expect((error as ApiError).message).toBe('합성 메시지')
     expect((error as ApiError).errorType).toBe('합성유형')
     expect((error as ApiError).status).toBe(status)
+  })
+})
+
+describe('회의록 api', () => {
+  it('조회는 viewer 쿼리를 URLSearchParams 로 만든다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    const calls = fakeRequests(200, { proposals: [] })
+    await fetchProposals('개인:샘플가')
+    await fetchProposal('개인:샘플가', '90100000000000000000000000000001')
+    await fetchTrace('개인:샘플가', '90100000000000000000000000000001')
+    const urls = calls.map((call) => new URL(call.url))
+    expect(urls.map((url) => url.pathname)).toEqual([
+      '/proposals',
+      '/proposals/90100000000000000000000000000001',
+      '/proposals/90100000000000000000000000000001/trace',
+    ])
+    expect(urls.every((url) => url.searchParams.get('viewer') === '개인:샘플가')).toBe(true)
+    expect(calls[0].url).not.toContain('샘플')
+  })
+
+  it('투입과 결정은 viewer 를 본문에 넣어 POST 한다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    const calls = fakeRequests()
+    await submitMinutes('개인:샘플가', 'm0007', 'all_layers', '합성 회의록')
+    await decideProposal('개인:샘플가', '90100000000000000000000000000001', [{ note_index: 0, decision: 'approve' }])
+    expect(calls.map((call) => [call.init?.method, new URL(call.url).pathname])).toEqual([
+      ['POST', '/minutes'],
+      ['POST', '/proposals/90100000000000000000000000000001/decide'],
+    ])
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual({ viewer: '개인:샘플가', meeting_id: 'm0007', mode: 'all_layers', text: '합성 회의록' })
+    expect(JSON.parse(calls[1].init?.body as string)).toEqual({ viewer: '개인:샘플가', decisions: [{ note_index: 0, decision: 'approve' }] })
+  })
+
+  it('409 이면 서버 message 를 담은 오류를 던진다', async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://api.test')
+    fakeRequests(409, { ok: false, error_type: 'MinutesAlreadyLinked', message: '합성 충돌 메시지' })
+    const error = await submitMinutes('전사', 'm0001', 'all_layers', '합성').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).message).toBe('합성 충돌 메시지')
+    expect((error as ApiError).errorType).toBe('MinutesAlreadyLinked')
   })
 })

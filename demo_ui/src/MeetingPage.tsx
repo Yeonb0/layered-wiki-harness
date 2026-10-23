@@ -4,12 +4,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   addProgress, ApiError, createTask, fetchMeeting, fetchTasks, fetchWorkspaces, updateTask, type Meeting, type Task, type TaskStatus,
-  type ViewResponse, type Viewer, type Workspace,
+  type Mode, type ViewResponse, type Viewer, type Workspace,
 } from './api'
 import { LAYER_COLOR } from './colors'
 import { MeetingForm, MEETING_STATUS_LABEL } from './MeetingForm'
+import { MinutesPanel } from './MinutesPanel'
 import { formatAt, formatRange, isOverdue, localToday, workspaceLabel } from './meetingsView'
 import { Toggle } from './Toggle'
+import { TracePanel } from './TracePanel'
 
 const TASK_STATUS_LABEL: Record<TaskStatus, string> = { todo: '할 일', doing: '진행 중', done: '완료' }
 export const MEETINGS_OFF = '시연 API 를 --meetings-file 로 띄우면 보인다'
@@ -144,6 +146,8 @@ export function MeetingPage({
   onOpenNote,
   onChanged,
   onOtherMode,
+  mode,
+  onViewInVault,
 }: {
   viewer: Viewer
   meetingId: string
@@ -154,6 +158,10 @@ export function MeetingPage({
   onChanged: () => void
   // Workspace 의 모드를 바꾼다 - 회의 탭은 그대로 둔다
   onOtherMode: () => void
+  // 지금 모드 ( 회의록 투입의 기본 모드 )
+  mode: Mode
+  // 그 모드로 바꾸고 보기를 다시 불러온다
+  onViewInVault: (mode: Mode) => void
 }) {
   const [meeting, setMeeting] = useState<Meeting | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
@@ -234,6 +242,7 @@ export function MeetingPage({
           </ul>
         )}
       </Toggle>
+      <MinutesPanel viewer={viewer} meeting={meeting} defaultMode={mode} onReloadMeeting={reload} onViewInVault={onViewInVault} />
       <Toggle title="회의록에서 나온 노트">
         {!meeting.minutes_doc_id ? (
           <p className="muted">연결된 회의록 없음</p>
@@ -257,6 +266,7 @@ export function MeetingPage({
                         <button className="link" onClick={() => onOpenNote(n.note_id)}>
                           {n.title}
                         </button>
+                        {n.source_doc_id.startsWith('901') && <span className="badge minutes-source">회의록 투입</span>}
                       </li>
                     ))}
                 </ul>
@@ -265,6 +275,7 @@ export function MeetingPage({
           </>
         )}
       </Toggle>
+      {meeting.minutes_doc_id && meeting.workspace.layer !== '개인' && <TracePanel viewer={viewer} docId={meeting.minutes_doc_id} />}
       <Toggle title="할 일">
         {tasks.length === 0 && <p className="muted">없음</p>}
         {tasks.map((task) => (

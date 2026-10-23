@@ -1570,3 +1570,124 @@ body.resizing {
   color: #fff;
   font-size: 11px;
 }
+
+/* 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 회의록 투입 · 승인 게이트 · 판정 기록 - 상태 배지 · 승인 / 반려 · 결정 표시 · 판정 기록 표 ( 다크 모드 ) */
+.badge.status-running {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.badge.status-awaiting_approval {
+  background: #f0b44c;
+}
+
+.badge.status-decided {
+  background: #4caf50;
+  color: #fff;
+}
+
+.badge.status-failed,
+.badge.failed {
+  background: #e5484d;
+  color: #fff;
+}
+
+.badge.minutes-source {
+  margin-left: 8px;
+  background: #3a3a3a;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.minutes-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 640px;
+}
+
+.minutes-form textarea {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.minutes-form label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.proposal-card {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.proposal-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.proposal-body {
+  margin: 8px 0;
+  padding: 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  white-space: pre-wrap;
+  word-break: keep-all;
+  font: inherit;
+  font-size: 13px;
+}
+
+.proposal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.proposal-actions .approve {
+  border: 1px solid #4caf50;
+  background: #4caf50;
+  color: #fff;
+}
+
+.proposal-actions .reject {
+  border: 1px solid #e5484d;
+  background: none;
+  color: #e5484d;
+}
+
+.decision {
+  margin: 8px 0 0;
+  font-weight: 600;
+}
+
+.decision.approved {
+  color: #4caf50;
+}
+
+.decision.rejected {
+  color: #e5484d;
+}
+
+.trace-table {
+  margin: 6px 0;
+  font-size: 13px;
+}
+
+.trace-place {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}

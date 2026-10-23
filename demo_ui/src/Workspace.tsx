@@ -38,8 +38,10 @@ export function Workspace({
   // 라이브 겹침 : overlay.mode 와 같은 모드의 보기에만 jobId 를 넘긴다 - 다른 모드는 기본 볼트다
   const [overlay, setOverlay] = useState<{ mode: Mode; jobId: string } | null>(null)
   const jobFor = (m: Mode) => (overlay && overlay.mode === m ? overlay.jobId : null)
-  const allLayers = useView('all_layers', viewer.viewer_id, jobFor('all_layers'))
-  const splitByLayer = useView('split_by_layer', viewer.viewer_id, jobFor('split_by_layer'))
+  // 회의록 노트를 승인한 뒤 두 모드의 보기를 다시 불러오는 키
+  const [viewVersion, setViewVersion] = useState(0)
+  const allLayers = useView('all_layers', viewer.viewer_id, jobFor('all_layers'), viewVersion)
+  const splitByLayer = useView('split_by_layer', viewer.viewer_id, jobFor('split_by_layer'), viewVersion)
   const views = { all_layers: allLayers, split_by_layer: splitByLayer }
   const current = views[mode]
   const [tabs, setTabs] = useState<TabState>(INITIAL_TABS)
@@ -126,6 +128,11 @@ export function Workspace({
           onOpenNote={openNote}
           onChanged={() => setMeetingVersion((n) => n + 1)}
           onOtherMode={() => setMode((m) => (m === 'all_layers' ? 'split_by_layer' : 'all_layers'))}
+          mode={mode}
+          onViewInVault={(target) => {
+            setMode(target)
+            setViewVersion((n) => n + 1)
+          }}
         />
       )
     }

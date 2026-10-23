@@ -4,10 +4,12 @@ import { fetchView, type Mode, type ViewResponse } from './api'
 
 // viewerId 가 null 이면 요청하지 않는다 - 비교할 보는 사람을 고르기 전 상태
 // jobId 가 있으면 그 작업의 새 노트를 겹친 보기를 받는다 - jobId 가 바뀌어도 다시 불러온다
+// refreshKey 가 바뀌면 같은 조건으로 다시 불러온다 ( 승인된 회의록 노트가 들어간 뒤 보기를 갱신할 때 )
 export function useView(
   mode: Mode,
   viewerId: string | null,
   jobId?: string | null,
+  refreshKey: number = 0,
 ): { data: ViewResponse | null; error: string | null } {
   const [data, setData] = useState<ViewResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -26,6 +28,6 @@ export function useView(
     return () => {
       cancelled = true
     }
-  }, [mode, viewerId, jobId])
+  }, [mode, viewerId, jobId, refreshKey])
   return { data, error }
 }
