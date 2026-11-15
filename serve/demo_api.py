@@ -19,7 +19,8 @@ from agent.propose import _to_document_record, run_propose_doc
 from agent.types import DownwardLink, NoteRecord
 from build.public_build import view_selection
 from labeling.gold import read_membership, visible_pairs_for
-from retrieval.search import Retriever
+from retrieval.embeddings import embed
+from retrieval.search import Retriever, _cosine_similarity, _embedding_text
 from runner.v2_sequential import (
   DEFAULT_WORK_ROOT,
   ENABLE_THINKING,
@@ -48,6 +49,11 @@ CONDITION = "제안"
 PROGRESS_EVERY = 10
 # 시연 앞단 ( 사용자 결정 2026-10-16 Dify 필수 ) : 요청 본문이 크면 메모리를 먹으므로 상한을 둔다
 MAX_BODY_BYTES = 4096
+# 사용자 결정 2026-11-15 : GET /search 의 k 는 검증 상한일 뿐 기본값이 아니다 - k 는 호출하는 쪽 ( Dify 노드 ) 이 정한다
+MAX_SEARCH_K = 10
+# 질문 길이 상한 - 임베딩 호출 한 번의 크기를 묶는다
+MAX_QUERY_CHARS = 500
+_SEARCH_K_VALUE = re.compile(r"[0-9]+")
 # 조회 한 번이 squid read_timeout 2분 안에 끝나야 한다
 MAX_WAIT_SECONDS = 60
 # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
@@ -247,6 +253,9 @@ class DemoApp:
     self.current_job_id = None
     # 사용자 결정 2026-10-23 : 라이브 투입은 화면 → 시연 API → Dify 워크플로 → 시연 API /jobs. Dify 앱 키는 서버만 가진다
     self.live = None
+    # 사용자 결정 2026-11-15 : /search 가 색인에 없는 노트 ( 회의록 겹침 ) 의 벡터를 note_id 로 캐시한다 - 값은 ( 임베딩 문장, 벡터 ) 라 문장이 바뀌면 다시 구한다
+    self.search_cache = {}
+    self.search_lock = threading.Lock()
 
   def health(self) -> dict:
     return {
@@ -344,6 +353,65 @@ class DemoApp:
     if self.minutes is not None:
       Counts["minutes_notes_included"] = sum(1 for Item in Items if Item["note_id"] in MinutesIds)
     return 200, self._mask({"mode": mode, "viewer_id": viewer_id, "show_names": self.show_names, "notes": Items, "counts": Counts})
+
+  def search(self, mode: str, viewer_id: str, query: str, k: int) -> tuple:
+    # 사용자 결정 2026-11-15 : Q&A 후보는 /view 와 같은 서버 쪽 보기 - 거르는 규칙 복제 금지
+    Status, View = self.view(mode, viewer_id, None)
+    if Status != 200:
+      return Status, View
+    Items = View["notes"]
+    Retr = self.cells[mode]["retriever"]
+    try:
+      # 색인의 같은 id 벡터를 그대로 쓴다 - 다시 임베딩하지 않는다
+      Vectors = {Record.id: Vector for Record, Vector in Retr.Index}
+      QueryVector = embed(query, backend=Retr.embed_backend)
+      Scored = []
+      for Item in Items:
+        Vector = Vectors.get(Item["note_id"])
+        if Vector is None:
+          Vector = self._overlay_vector(mode, Item["note_id"], Retr.embed_backend)
+        Scored.append((_cosine_similarity(QueryVector, Vector), Item))
+    except Exception as Error:
+      # 벡터를 못 구한 노트를 조용히 건너뛰지 않는다 - 전체를 실패로 돌려준다
+      return 500, self._mask({"ok": False, "error_type": type(Error).__name__, "message": str(Error)})
+    # 점수 내림차순, 같으면 note_id 오름차순
+    Scored.sort(key=lambda Pair: (-Pair[0], Pair[1]["note_id"]))
+    Results = []
+    Blocks = []
+    for Rank, (Score, Item) in enumerate(Scored[:k], start=1):
+      Results.append({
+        "rank": Rank, "note_id": Item["note_id"], "title": Item["title"], "layer": Item["layer"],
+        "group_label": Item["group_label"], "source_doc_id": Item["source_doc_id"],
+        "source_segment_ids": Item["source_segment_ids"], "score": Score, "body": Item["body"],
+      })
+      # 전사 노트는 그룹이 없어 층만 적는다
+      Where = Item["layer"] if Item["group_label"] is None else f"{Item['layer']} · {Item['group_label']}"
+      Blocks.append(f"[{Item['note_id']}] ({Where}) {Item['title']}\n{Item['body']}")
+    return 200, self._mask({
+      "mode": mode, "viewer_id": viewer_id, "show_names": self.show_names, "query": query, "k": k,
+      "considered": len(Items), "results": Results, "context": "\n\n".join(Blocks),
+    })
+
+  def _overlay_vector(self, Mode: str, NoteId: str, Backend) -> list:
+    # 색인에 없는 노트는 승인된 회의록 노트다 - 가려지지 않은 원문으로 임베딩한다 ( view 의 본문은 가려졌을 수 있다 )
+    Raw = None
+    if self.minutes is not None:
+      for Record in self.minutes.docs():
+        if Record["mode"] == Mode and Record["status"] == "decided":
+          for Row in Record["approved_notes"]:
+            if Row["note_id"] == NoteId:
+              Raw = Row
+    if Raw is None:
+      raise ValueError(f"벡터를 구할 수 없는 노트: {NoteId}")
+    Text = _embedding_text(_to_document_record(_restore_note(Raw)))
+    with self.search_lock:
+      Cached = self.search_cache.get(NoteId)
+    if Cached is not None and Cached[0] == Text:
+      return Cached[1]
+    Vector = embed(Text, backend=Backend)
+    with self.search_lock:
+      self.search_cache[NoteId] = (Text, Vector)
+    return Vector
 
   def _overlay(self, Notes: list, Job: dict) -> tuple:
     # 완료된 작업의 새 노트가 그 문서의 기본 노트를 대신한다 - 요청 상태와 같은 규칙이다
@@ -1284,6 +1352,8 @@ def make_handler(App: DemoApp, cors_origin=None):
         self._send(200, App.viewers())
       elif urlsplit(self.path).path == "/view":
         self._view(urlsplit(self.path).query)
+      elif urlsplit(self.path).path == "/search":
+        self._search(urlsplit(self.path).query)
       else:
         # 사용자 결정 2026-10-17 비동기 작업 + 조회 : squid read_timeout 2분 · client_lifetime 5분이라 문서 한 건 ( 85 ~ 450 s ) 동기 응답이 Dify HTTP 노드에서 끊긴다
         Parts = urlsplit(self.path)
@@ -1305,6 +1375,25 @@ def make_handler(App: DemoApp, cors_origin=None):
         self._send(400, {"ok": False, "error_type": "BadRequest", "message": "mode · viewer 는 하나씩, job 은 많아야 하나여야 한다"})
         return
       Status, Obj = App.view(Mode[0], Viewer[0], Job[0] if Job else None)
+      self._send(Status, Obj)
+
+    def _search(self, Query: str) -> None:
+      # mode · viewer · q · k 는 정확히 하나씩 - 빠지거나 두 번 오거나 빈 값이면 400, 기본값으로 채우지 않는다
+      Params = parse_qs(Query, keep_blank_values=True)
+      Values = {}
+      for Key in ("mode", "viewer", "q", "k"):
+        Given = Params.get(Key, [])
+        if len(Given) != 1 or not Given[0]:
+          self._send(400, {"ok": False, "error_type": "BadRequest", "message": "mode · viewer · q · k 는 하나씩 있어야 하고 비어 있으면 안 된다"})
+          return
+        Values[Key] = Given[0]
+      if not _SEARCH_K_VALUE.fullmatch(Values["k"]) or not 1 <= int(Values["k"]) <= MAX_SEARCH_K:
+        self._send(400, {"ok": False, "error_type": "BadRequest", "message": f"k 는 1 ~ {MAX_SEARCH_K} 정수여야 한다"})
+        return
+      if len(Values["q"]) > MAX_QUERY_CHARS:
+        self._send(400, {"ok": False, "error_type": "BadRequest", "message": f"q 는 {MAX_QUERY_CHARS} 글자 이하여야 한다"})
+        return
+      Status, Obj = App.search(Values["mode"], Values["viewer"], Values["q"], int(Values["k"]))
       self._send(Status, Obj)
 
     def _parse_wait(self, Query: str):
