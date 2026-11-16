@@ -450,3 +450,24 @@ export function confirmTask(viewer: string, taskId: string): Promise<Task> {
 export function discardTask(viewer: string, taskId: string): Promise<{ ok: true; task_id: string }> {
   return meetingsRequest('POST', `/tasks/${taskId}/discard`, { viewer })
 }
+
+// 사용자 결정 2026-11-16 : Q&A 는 화면 → 시연 API /ask → Dify 챗플로우. 근거 노트 표시도 서버 쪽 보기로 거른 것만 받는다
+// 서버 키 그대로다 ( serve/demo_api.py DemoApp.ask ) - sources 는 보기 안 노트만, out_of_view_ids 는 id 만 있다
+export type AskSource = { note_id: string; title: string; layer: string; group_label: string | null }
+
+export type AskResponse = {
+  mode: Mode
+  viewer_id: string
+  query: string
+  answer: string
+  cited_ids: string[]
+  sources: AskSource[]
+  out_of_view_ids: string[]
+  message_id: string | null
+  conversation_id: string | null
+  elapsed_seconds: number
+}
+
+export function postAsk(mode: Mode, viewerId: string, query: string): Promise<AskResponse> {
+  return meetingsRequest<AskResponse>('POST', '/ask', { mode, viewer: viewerId, query })
+}

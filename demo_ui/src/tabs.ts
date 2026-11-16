@@ -5,6 +5,8 @@ export const MEETINGS_TAB = 'meetings'
 export const COMPARE_VIEWER_TAB = 'compare-viewer'
 export const COMPARE_MODE_TAB = 'compare-mode'
 export const LIVE_TAB = 'live'
+// 사용자 결정 2026-11-16 : Q&A 탭 - 고정 탭 목록 ( FIXED_TABS · INITIAL_TABS ) 은 그대로 두고 Workspace 가 시작 상태에 덧붙인다
+export const QA_TAB = 'qa'
 // 고정 탭 순서 : 대시보드, 그래프, 회의, 보는 사람 비교, 모드 비교, 라이브 투입
 const FIXED_TABS = [DASHBOARD_TAB, GRAPH_TAB, MEETINGS_TAB, COMPARE_VIEWER_TAB, COMPARE_MODE_TAB, LIVE_TAB]
 

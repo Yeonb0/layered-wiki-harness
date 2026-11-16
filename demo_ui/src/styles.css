@@ -1805,3 +1805,59 @@ blockquote.evidence {
 .doc-actions {
   margin-top: 12px;
 }
+
+/* 사용자 결정 2026-11-16 : Q&A 탭 */
+.qa {
+  max-width: 880px;
+  padding: 20px 24px 56px;
+}
+
+.qa h1 {
+  margin-top: 0;
+  font-size: 22px;
+}
+
+.qa-form {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.qa-form textarea {
+  flex: 1;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  resize: vertical;
+}
+
+.qa-entry {
+  margin-top: 20px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.qa-answer {
+  white-space: pre-wrap;
+  font: inherit;
+  margin: 8px 0;
+}
+
+.qa-sources {
+  padding-left: 18px;
+  margin: 4px 0 0;
+}
+
+.qa-footer {
+  position: sticky;
+  bottom: 0;
+  margin: 24px 0 0;
+  padding: 8px 0;
+  background: var(--bg);
+  font-size: 12px;
+}

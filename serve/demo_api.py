@@ -126,6 +126,50 @@ def make_dify_fn(url: str, key: str, timeout_seconds: float = DIFY_READ_TIMEOUT_
           yield json.loads(line[len("data: "):])
 
   return dify_fn
+# 사용자 결정 2026-11-16 : Q&A 는 화면 → 시연 API /ask → Dify 챗플로우 ( blocking ) - 앱 키는 서버만 가진다
+def make_dify_chat_fn(url: str, key: str, timeout_seconds: float = DIFY_READ_TIMEOUT_SECONDS):
+  endpoint = url.rstrip("/") + "/chat-messages"
+  # 환경 변수 프록시를 쓰지 않는다 - 빈 ProxyHandler 로 직접 연결한다
+  opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+  def dify_chat_fn(inputs: dict, query: str, user: str) -> dict:
+    body = json.dumps(
+      {"inputs": inputs, "query": query, "response_mode": "blocking", "user": user}, ensure_ascii=False
+    ).encode("utf-8")
+    request = urllib.request.Request(
+      endpoint, data=body, method="POST", headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    )
+    try:
+      response = opener.open(request, timeout=timeout_seconds)
+    except urllib.error.HTTPError as error:
+      # 오류에는 상태 코드와 응답 본문의 code · message 만 담는다 - 헤더 · 키는 담지 않는다
+      code = message = None
+      try:
+        parsed = json.loads(error.read(_DIFY_ERROR_BODY_BYTES).decode("utf-8"))
+        if isinstance(parsed, dict):
+          code, message = parsed.get("code"), parsed.get("message")
+      except (ValueError, OSError):
+        pass
+      finally:
+        error.close()
+      raise DifyError(f"Dify HTTP {error.code} : code={code} message={message}") from None
+    except (urllib.error.URLError, OSError) as error:
+      # 연결 실패 · 타임아웃 - 예외 이름만 남기고 주소 · 헤더는 담지 않는다
+      raise DifyError(f"Dify 연결 실패 : {type(error).__name__}") from None
+    with response:
+      try:
+        parsed = json.loads(response.read().decode("utf-8"))
+      except (ValueError, OSError) as error:
+        raise DifyError(f"Dify 응답을 읽을 수 없다 : {type(error).__name__}") from None
+    if not isinstance(parsed, dict):
+      raise DifyError("Dify 응답이 JSON 객체가 아니다")
+    return parsed
+
+  return dify_chat_fn
+
+
+# 사용자 결정 2026-11-16 : 답 안의 [ ... ] 에서 인용 id 를 뽑는다
+_CITE = re.compile(r"\[([^\[\]]+)\]")
 # 사용자 결정 2026-10-22 : 합성 코퍼스는 가명 그대로 보인다 - 불러온 실행 manifest 의 args.snapshot 이 이 값이고 args.run_kind 가 아래 값일 때만
 DEMO_SNAPSHOT = 900
 DEMO_RUN_KIND = "demo"
@@ -170,8 +214,10 @@ def group_label(Layer: str, Group, Labels: dict):
 
 
 class DemoApp:
-  def __init__(self, run_dir, chat_fn, embed_backend, commit_fn, work_root, print_fn, dify_fn=None, meetings=None) -> None:
+  def __init__(self, run_dir, chat_fn, embed_backend, commit_fn, work_root, print_fn, dify_fn=None, meetings=None, dify_chat_fn=None) -> None:
     self.chat_fn = chat_fn
+    # 사용자 결정 2026-11-16 : Q&A 챗플로우를 부르는 함수 - 없으면 /ask 는 503 이다
+    self.dify_chat_fn = dify_chat_fn
     # 라이브 투입에서 Dify 스트리밍 이벤트를 차례로 내는 함수 - 없으면 라이브 투입을 받지 않는다
     self.dify_fn = dify_fn
     # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능 - 회의 · 할 일은 노트와 같은 층 규칙으로 서버가 거른다
@@ -390,6 +436,53 @@ class DemoApp:
     return 200, self._mask({
       "mode": mode, "viewer_id": viewer_id, "show_names": self.show_names, "query": query, "k": k,
       "considered": len(Items), "results": Results, "context": "\n\n".join(Blocks),
+    })
+
+  def ask(self, mode: str, viewer_id: str, query: str) -> tuple:
+    if self.dify_chat_fn is None:
+      return 503, {"ok": False, "error_type": "DifyNotConfigured", "message": "Q&A 가 설정되지 않았다"}
+    # view 와 같은 mode · viewer 검사를 재사용한다 - 보기 밖 노트를 거르는 기준도 이 결과다
+    Status, View = self.view(mode, viewer_id, None)
+    if Status != 200:
+      return Status, View
+    if not query:
+      return 400, {"ok": False, "error_type": "BadRequest", "message": "query 가 비어 있다"}
+    if len(query) > MAX_QUERY_CHARS:
+      return 400, {"ok": False, "error_type": "BadRequest", "message": f"query 는 {MAX_QUERY_CHARS} 글자 이하여야 한다"}
+    # 생성 서버 슬롯이 1개다 - 작업 · 라이브 · 다른 /ask 가 돌고 있으면 겹치지 않는다
+    with self.meta_lock:
+      if (self.live is not None and self.live["record"]["status"] == "running") or not self.lock.acquire(blocking=False):
+        return 409, {"ok": False, "error_type": "Busy", "message": "다른 요청을 처리 중이다"}
+    try:
+      Started = time.monotonic()
+      try:
+        Reply = self.dify_chat_fn({"viewer": viewer_id, "mode": mode}, query, LIVE_USER)
+        Answer = Reply.get("answer")
+        if not isinstance(Answer, str):
+          raise DifyError("Dify 응답에 answer 문자열이 없다")
+      except DifyError as Error:
+        return 502, self._mask({"ok": False, "error_type": "DifyError", "message": str(Error)})
+      except Exception as Error:
+        return 502, self._mask({"ok": False, "error_type": "DifyError", "message": f"Dify 호출 실패 : {type(Error).__name__}"})
+      Elapsed = time.monotonic() - Started
+    finally:
+      self.lock.release()
+    Cited = []
+    for Match in _CITE.finditer(Answer):
+      Id = Match.group(1).strip()
+      if Id and Id not in Cited:
+        Cited.append(Id)
+    ByIdInView = {Note["note_id"]: Note for Note in View["notes"]}
+    # 사용자 결정 2026-11-16 : 근거 노트 표시도 서버 쪽 보기로 거른다 - 보기 밖 id 는 id 만 내보낸다
+    Sources = [
+      {"note_id": Id, "title": ByIdInView[Id]["title"], "layer": ByIdInView[Id]["layer"], "group_label": ByIdInView[Id]["group_label"]}
+      for Id in Cited if Id in ByIdInView
+    ]
+    OutOfView = [Id for Id in Cited if Id not in ByIdInView]
+    return 200, self._mask({
+      "mode": mode, "viewer_id": viewer_id, "query": query, "answer": Answer, "cited_ids": Cited, "sources": Sources,
+      "out_of_view_ids": OutOfView, "message_id": Reply.get("message_id"), "conversation_id": Reply.get("conversation_id"),
+      "elapsed_seconds": round(Elapsed, 3),
     })
 
   def _overlay_vector(self, Mode: str, NoteId: str, Backend) -> list:
@@ -1436,6 +1529,16 @@ def make_handler(App: DemoApp, cors_origin=None):
         Status, Obj = App.minutes_request("POST", Path, {}, Body)
         self._send(Status, Obj)
         return
+      if self.path == "/ask":
+        Body = self._read_json_body()
+        if Body is _BAD_BODY:
+          return
+        if not isinstance(Body, dict) or not all(isinstance(Body.get(Key), str) for Key in ("mode", "viewer", "query")):
+          self._send(400, {"ok": False, "error_type": "BadRequest", "message": "본문은 mode · viewer · query 문자열을 가진 JSON 이어야 한다"})
+          return
+        Status, Obj = App.ask(Body["mode"], Body["viewer"], Body["query"])
+        self._send(Status, Obj)
+        return
       if self.path not in ("/run", "/jobs", "/live"):
         self._send(404, {"ok": False, "error_type": "NotFound", "message": "알 수 없는 경로"})
         return
@@ -1469,6 +1572,8 @@ def parse_args(argv=None) -> argparse.Namespace:
   # 기본 URL · 기본 변수 이름을 두지 않는다 - 둘 중 하나만 주면 라이브 투입이 반쯤 설정된 채로 뜬다
   Parser.add_argument("--dify-url", default=None)
   Parser.add_argument("--dify-key-env", default=None)
+  # 사용자 결정 2026-11-16 : Q&A 챗플로우 앱 키를 담은 환경 변수 이름 - --dify-url 이 있을 때만 쓴다
+  Parser.add_argument("--dify-qa-key-env", default=None)
   # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 시연 경로 회의 기능 - 회의 · 할 일은 노트와 같은 층 규칙으로 서버가 거른다
   Parser.add_argument("--meetings-file", default=None)
   Parser.add_argument("--meetings-seed", default=None)
@@ -1479,6 +1584,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     Parser.error("--minutes-dir 는 --meetings-file 과 함께 줘야 한다")
   if (Args.dify_url is None) != (Args.dify_key_env is None):
     Parser.error("--dify-url 과 --dify-key-env 는 함께 줘야 한다")
+  if Args.dify_qa_key_env is not None and Args.dify_url is None:
+    Parser.error("--dify-qa-key-env 는 --dify-url 과 함께 줘야 한다")
   # 예시만 주면 쓸 파일이 없다
   if Args.meetings_seed is not None and Args.meetings_file is None:
     Parser.error("--meetings-seed 는 --meetings-file 과 함께 줘야 한다")
@@ -1495,6 +1602,17 @@ def dify_fn_from_args(Args, environ=None):
   if not Key:
     raise SystemExit(f"환경 변수 {Args.dify_key_env} 가 비었거나 없다")
   return make_dify_fn(Args.dify_url, Key)
+
+
+def dify_chat_fn_from_args(Args, environ=None):
+  if Args.dify_qa_key_env is None:
+    return None
+  Environ = os.environ if environ is None else environ
+  Key = Environ.get(Args.dify_qa_key_env, "")
+  # 키가 비었거나 없으면 멈춘다 - 메시지에는 변수 이름만 넣고 값은 넣지 않는다
+  if not Key:
+    raise SystemExit(f"환경 변수 {Args.dify_qa_key_env} 가 비었거나 없다")
+  return make_dify_chat_fn(Args.dify_url, Key)
 
 
 def meetings_from_args(Args, App, repo_dir=REPO_DIR):
@@ -1535,6 +1653,7 @@ def main(argv=None) -> None:
   App = DemoApp(
     Args.run_dir, chat_fn=chat, embed_backend=None, commit_fn=lambda: git_head_commit(REPO_DIR),
     work_root=DEFAULT_WORK_ROOT, print_fn=_print_flush, dify_fn=dify_fn_from_args(Args),
+    dify_chat_fn=dify_chat_fn_from_args(Args),
   )
   App.meetings = meetings_from_args(Args, App)
   Minutes = minutes_from_args(Args, App)

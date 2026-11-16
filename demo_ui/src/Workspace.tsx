@@ -12,12 +12,13 @@ import { MeetingPage } from './MeetingPage'
 import { WikiLink } from './WikiLink'
 import { MeetingsTab } from './MeetingsTab'
 import { NoteReader } from './NoteReader'
+import { QaTab } from './QaTab'
 import { loadPanelState, savePanelState, type Panel, type PanelState } from './panelWidth'
 import { Resizer } from './Resizer'
 import { MODE_LABEL, Sidebar } from './Sidebar'
 import {
   activate, closeTab, COMPARE_MODE_TAB, COMPARE_VIEWER_TAB, DASHBOARD_TAB, GRAPH_TAB, INITIAL_TABS, noteIdOfTab, openTab,
-  LIVE_TAB, meetingIdOfTab, MEETINGS_TAB, navigateTo, openMeetingTab, syncTabs, wantsNewTab, type OpenEvent, type TabState,
+  LIVE_TAB, meetingIdOfTab, MEETINGS_TAB, navigateTo, openMeetingTab, QA_TAB, syncTabs, wantsNewTab, type OpenEvent, type TabState,
 } from './tabs'
 import { backValid, canBack, canForward, EMPTY_HISTORY, forwardValid, push, type History } from './history'
 import { useView } from './useView'
@@ -46,7 +47,8 @@ export function Workspace({
   const splitByLayer = useView('split_by_layer', viewer.viewer_id, jobFor('split_by_layer'), viewVersion)
   const views = { all_layers: allLayers, split_by_layer: splitByLayer }
   const current = views[mode]
-  const [tabs, setTabs] = useState<TabState>(INITIAL_TABS)
+  // 사용자 결정 2026-11-16 : Q&A 탭은 기존 고정 탭 여섯 뒤에 덧붙인다 - INITIAL_TABS 와 기존 탭 순서는 그대로다
+  const [tabs, setTabs] = useState<TabState>({ tabs: [...INITIAL_TABS.tabs, QA_TAB], active: INITIAL_TABS.active })
   const [showSameLayer, setShowSameLayer] = useState(true)
   // 탐색기 · 연결 패널의 폭과 접힘 - 저장할 때 최신 값을 쓰려고 ref 에도 둔다 ( 오래된 값 저장 금지 )
   const [panels, setPanels] = useState<PanelState>(loadPanelState)
@@ -206,6 +208,7 @@ export function Workspace({
         />
       )
     }
+    if (tabs.active === QA_TAB) return <QaTab viewer={viewer} mode={mode} onOpenNote={openNote} />
     if (tabs.active === COMPARE_MODE_TAB) {
       return <CompareMode views={views} showNames={showNames} onOpenNoteInMode={openNoteInMode} />
     }
@@ -235,6 +238,7 @@ export function Workspace({
     if (key === COMPARE_VIEWER_TAB) return '보는 사람 비교'
     if (key === COMPARE_MODE_TAB) return '모드 비교'
     if (key === LIVE_TAB) return '라이브 투입'
+    if (key === QA_TAB) return 'Q&A'
     const meetingId = meetingIdOfTab(key)
     if (meetingId !== null) return meetingTitles.get(meetingId) ?? meetingId
     const id = noteIdOfTab(key)
@@ -277,6 +281,9 @@ export function Workspace({
           </button>
           <button className={tabs.active === LIVE_TAB ? 'on' : ''} onClick={() => setTabs((s) => activate(s, LIVE_TAB))}>
             라이브 투입
+          </button>
+          <button className={tabs.active === QA_TAB ? 'on' : ''} onClick={() => setTabs((s) => activate(s, QA_TAB))}>
+            Q&amp;A
           </button>
         </div>
         <button onClick={onChangeViewer}>보는 사람 바꾸기</button>

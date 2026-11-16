@@ -13,6 +13,9 @@
    python -m serve.demo_api --run-dir <완료된 제안 실행 폴더> --host 127.0.0.1 --port 8090 --cors-origin http://localhost:5173
    ```
 
+   Q&A 탭을 쓰려면 `--dify-url` 과 함께 `--dify-qa-key-env <Q&A 챗플로우 앱 키를 담은 환경 변수 이름>` 을 준다.
+   `POST /ask` ( 본문 `mode` · `viewer` · `query` ) 는 Dify 챗플로우를 대신 불러 답을 받고, 인용한 노트도 그 보는 사람의 보기 안에 있는 것만 `sources` 로 돌려준다.
+
 3. 화면 의존성을 설치한다 ( package-lock.json 으로 버전 고정 )
 
    ```
