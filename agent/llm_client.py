@@ -87,7 +87,7 @@ def chat(messages: list, model_id: str, config: GenerationConfig, response_schem
   if not isinstance(Content, str):
     raise ValueError("message.content 가 문자열이 아니다")
 
-  # 결정 : thinking 은 전 조건에서 끄다 - 새면 조건 등가성이 깨진다
+  # 결정 : thinking 은 전 조건에서 끈다 - 새면 조건 등가성이 깨진다
   if not config.enable_thinking:
     if Message.get("reasoning_content") not in (None, ""):
       raise ValueError("enable_thinking False 인데 reasoning_content 가 비어 있지 않다")
