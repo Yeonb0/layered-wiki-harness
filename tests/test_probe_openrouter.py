@@ -3,6 +3,8 @@ import os
 import unittest
 from unittest import mock
 
+import requests
+
 from agent.llm_client import ChatResult
 from agent.types import SourceDoc, SourceSegment
 
@@ -58,6 +60,13 @@ class ProbeTest(unittest.TestCase):
     with mock.patch.dict(os.environ, {"LAYERED_WIKI_LLM_API_KEY": "sekret-123"}):
       Row = probe_openrouter.probe("x/y", _doc(), "층 정의", 777, chat_fn=Chat)
     self.assertNotIn("sekret-123", Row["error"])
+
+  def test_http_error_body_is_attached(self) -> None:
+    # OpenRouter 404 의 원인 (없는 모델 / 인자를 받는 제공자 없음) 은 본문에만 있다
+    Resp = mock.Mock(text='{"error":{"message":"No endpoints found that support the requested parameters"}}')
+    Error = requests.HTTPError("404 Client Error: Not Found", response=Resp)
+    Row = probe_openrouter.probe("x/y", _doc(), "층 정의", 777, chat_fn=mock.Mock(side_effect=Error))
+    self.assertIn("No endpoints found", Row["error"])
 
 
 if __name__ == "__main__":

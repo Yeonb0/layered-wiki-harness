@@ -52,6 +52,10 @@ def probe(model_id: str, doc, layer_block: str, max_tokens: int, chat_fn=chat) -
   except Exception as Error:
     # 거절 (chat_template_kwargs · 스키마 미지원) · 생각 누출 · usage 없음은 모두 여기로 : 원인 문구를 그대로 남긴다
     Row["error"] = _hide_key(f"{type(Error).__name__}: {Error}")
+    # OpenRouter 는 없는 모델과 "요청 인자를 받는 제공자 없음" 을 둘 다 404 로 준다 : 응답 본문을 붙여야 구분된다
+    Body = getattr(getattr(Error, "response", None), "text", None)
+    if isinstance(Body, str) and Body:
+      Row["error"] += _hide_key(f" | body: {Body[:500]}")
     return Row
   Row.update(finish_reason=Result.finish_reason, prompt_tokens=Result.prompt_tokens, completion_tokens=Result.completion_tokens, elapsed_s=round(Result.elapsed_seconds, 2))
   if Result.finish_reason != "stop":
