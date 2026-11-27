@@ -31,6 +31,7 @@ from runner.v2_sequential import (
   git_head_commit,
   load_source_docs,
 )
+from serve.direct_front import make_direct_chat_fn, make_direct_live_fn
 from serve.limits import DailyCounter
 from serve.assign import ASSIGN_PROMPT_VERSION, AssignOutputError, append_log, run_assign
 from serve.meetings import AlreadyLinkedError, MeetingStore, NotFoundError
@@ -44,6 +45,8 @@ _DAILY_LIMIT_BODY = {"ok": False, "error_type": "DailyLimit", "message": "오늘
 _HARNESS_COMMIT = re.compile(r"[0-9a-f]{40}")
 # 상한의 날짜 경계는 서울 자정
 DAILY_LIMIT_TZ = "Asia/Seoul"
+# direct 앞단의 라이브 대기 한도 : Cloud Run 요청 한도 (900s) 와 같게 (서버 계획 Task 4)
+DIRECT_LIVE_WAIT_SECONDS = 900
 # 시연 앞단 ( 사용자 결정 2026-10-16 Dify 필수 ) : 시연은 제안 조건 실행의 설정을 그대로 쓰므로 실행 manifest 의 args 에서 읽을 키를 고정한다
 _REQUIRED_ARGS = (
   "segments", "docs", "doc_ids", "split_doc_ids", "selection", "source_layers", "criteria", "criteria_sha256",
@@ -1662,6 +1665,13 @@ def commit_fn_from_args(Args, repo_dir=REPO_DIR):
   return lambda: git_head_commit(repo_dir)
 
 
+def attach_direct_front(App) -> None:
+  # 공개 시연 서버 (설계 9.7) : Dify 대신 서버 안의 함수. 앱이 있어야 작업을 제출할 수 있어 앱을 만든 뒤 붙인다
+  App.dify_fn = make_direct_live_fn(App, DIRECT_LIVE_WAIT_SECONDS)
+  # Q&A 도 같은 모델 (--model-id 로 덮어쓴 App.model_id) 로 서버 안에서 답한다
+  App.dify_chat_fn = make_direct_chat_fn(App, chat, App.model_id)
+
+
 def daily_counter_from_args(Args):
   if Args.daily_job_limit is None:
     return None
@@ -1733,6 +1743,8 @@ def main(argv=None) -> None:
     dify_chat_fn=dify_chat_fn_from_args(Args),
     model_id_override=Args.model_id, front=Args.front, daily_counter=daily_counter_from_args(Args),
   )
+  if Args.front == "direct":
+    attach_direct_front(App)
   App.meetings = meetings_from_args(Args, App)
   Minutes = minutes_from_args(Args, App)
   if Minutes is not None:
