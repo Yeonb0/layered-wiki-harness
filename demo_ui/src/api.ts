@@ -20,6 +20,10 @@ export type HealthResponse = {
   modes: Mode[]
   base_notes: Record<string, number>
   base_run: string
+  // 공개 시연 서버 (설계 9.5-3) : 옛 서버에는 없다
+  model_id?: string
+  base_model_id?: string
+  front?: 'dify' | 'direct'
 }
 
 export type ViewNote = {

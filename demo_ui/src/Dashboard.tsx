@@ -1,11 +1,12 @@
 // 사용자 결정 2026-10-23 : 대시보드는 노션 느낌 ( 데이터베이스 표 · 보드 · 토글 ). 두 모드의 보기를 모두 불러 두고 응답을 거르지 않고 세기만 한다
 // 정렬 · 거르기는 서버가 거른 보기 안에서만 하는 화면 표시다
-import { useMemo, useState } from 'react'
-import type { Mode, Viewer, ViewResponse } from './api'
+import { useEffect, useMemo, useState } from 'react'
+import { fetchHealth, type Mode, type Viewer, type ViewResponse } from './api'
 import { LAYER_COLOR } from './colors'
 import { boardColumns, filterByLayer, sortRows, toRows, type Row, type SortKey } from './database'
 import { BANDS } from './layout'
 import { MARKER_KIND_LABEL } from './markers'
+import { modelNotice } from './front'
 import { dashboardStats } from './stats'
 import { MODE_LABEL } from './Sidebar'
 import { Toggle } from './Toggle'
@@ -160,6 +161,17 @@ export function Dashboard({
 }) {
   const current = views[mode]
   const rows = useMemo(() => (current.data ? toRows(current.data, showNames) : []), [current.data, showNames])
+  // AI 사용 고지 : 서버가 쓰는 모델을 경고 줄에 붙인다 (옛 서버는 model_id 가 없어 붙이지 않는다)
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    fetchHealth()
+      .then((health) => !cancelled && setNotice(modelNotice(health)))
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
   if (current.error) return <div className="notice error">오류 : {current.error}</div>
   if (!current.data) return <div className="notice">불러오는 중</div>
   const stats = dashboardStats(current.data)
@@ -178,7 +190,10 @@ export function Dashboard({
     <div className="page">
       <h1>대시보드</h1>
       <p className="subtitle">{`${viewer.label} ( ${viewer.layer} ) · ${MODE_LABEL[mode]}`}</p>
-      <p className="notice warn">합성 시연 코퍼스의 메커니즘 시연이며 측정 결과가 아니다</p>
+      <p className="notice warn">
+        합성 시연 코퍼스의 메커니즘 시연이며 측정 결과가 아니다
+        {notice && ` · ${notice}`}
+      </p>
       <Toggle title="요약">
         <div className="cards-row">
           {cards.map((card) => (

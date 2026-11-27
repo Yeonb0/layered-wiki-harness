@@ -2,8 +2,9 @@
 // 사용자 결정 2026-10-23 : 라이브 투입은 화면 → 시연 API → Dify 워크플로 → 시연 API /jobs. Dify 앱 키는 서버만 가진다
 import { useEffect, useState } from 'react'
 import {
-  fetchDocs, fetchJob, fetchLive, postLive, type DocItem, type JobStatus, type LiveState, type Mode,
+  fetchDocs, fetchHealth, fetchJob, fetchLive, postLive, type DocItem, type JobStatus, type LiveState, type Mode,
 } from './api'
+import { liveLabels, type Front } from './front'
 import { LAYER_COLOR } from './colors'
 import { MODE_LABEL } from './Sidebar'
 
@@ -39,6 +40,9 @@ export function LiveTab({
   const [live, setLive] = useState<LiveState | null>(null)
   const [job, setJob] = useState<JobStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // 앞단 (Dify / 직접) 에 맞춘 문구 : health 를 못 받으면 옛 서버처럼 Dify 문구
+  const [front, setFront] = useState<Front | undefined>(undefined)
+  const labels = liveLabels(front)
 
   // 처음 열 때 문서 목록과 지금 라이브 상태를 받는다 - 탭을 떠났다 와도 GET /live 로 상태를 다시 그린다
   useEffect(() => {
@@ -51,6 +55,9 @@ export function LiveTab({
         if (list.some((d) => d.doc_id === LIVE_DEFAULT_DOC_ID)) setDocId(LIVE_DEFAULT_DOC_ID)
       })
       .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
+    fetchHealth()
+      .then((health) => !cancelled && setFront(health.front))
+      .catch(() => {})
     fetchLive()
       .then((state) => !cancelled && setLive(state))
       .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
@@ -127,7 +134,7 @@ export function LiveTab({
           </select>
         </label>
         <button className="on" disabled={!docId || running} onClick={start}>
-          Dify 로 투입
+          {labels.button}
         </button>
       </div>
       {docs && !docs.some((d) => d.doc_id === LIVE_DEFAULT_DOC_ID) && (
@@ -138,7 +145,7 @@ export function LiveTab({
         <ol className="steps">
           <Step
             state={record.workflow_run_id ? 'done' : record.status === 'failed' ? 'fail' : 'active'}
-            label="① Dify 실행 시작"
+            label={labels.step1}
             detail={record.workflow_run_id ? `workflow_run_id ${record.workflow_run_id.slice(0, 8)}` : undefined}
           />
           <Step
