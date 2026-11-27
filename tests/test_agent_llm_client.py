@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest import mock
 
-from agent.llm_client import LLM_ENDPOINT_ENV, GenerationConfig, chat
+from agent.llm_client import LLM_API_KEY_ENV, LLM_ENDPOINT_ENV, GenerationConfig, chat
 
 # 픽스처일 뿐이며 규칙과 무관하다
 _CONFIG = GenerationConfig(temperature=0.25, seed=123, max_tokens=77, enable_thinking=False)
@@ -127,6 +127,40 @@ class ResponseCheckTest(unittest.TestCase):
   def test_timings_none_when_absent(self) -> None:
     Result, _ = _call(_body())
     self.assertIsNone(Result.timings)
+
+
+
+class ApiKeyHeaderTest(unittest.TestCase):
+  # 공개 시연 서버용 Bearer 헤더 : 실험 경로는 변수를 두지 않으므로 요청이 지금과 같아야 한다
+  def _post_kwargs(self, Env: dict) -> dict:
+    with mock.patch.dict(os.environ, Env, clear=True), mock.patch("requests.post", return_value=_response(_body())) as Post:
+      chat(_MESSAGES, "합성모델", _CONFIG, _SCHEMA, timeout_seconds=9)
+    return Post.call_args
+
+  def test_no_api_key_sends_identical_request(self) -> None:
+    Call = self._post_kwargs({LLM_ENDPOINT_ENV: _URL})
+    self.assertEqual(Call.args, (_URL,))
+    self.assertEqual(set(Call.kwargs), {"json", "timeout"})
+    self.assertNotIn("headers", Call.kwargs)
+    self.assertEqual(Call.kwargs["json"], {
+      "model": "합성모델",
+      "messages": _MESSAGES,
+      "temperature": 0.25,
+      "seed": 123,
+      "max_tokens": 77,
+      "chat_template_kwargs": {"enable_thinking": False},
+      "response_format": {"type": "json_schema", "json_schema": {"name": "output", "schema": _SCHEMA}},
+    })
+    self.assertEqual(Call.kwargs["timeout"], 9)
+
+  def test_api_key_adds_bearer_header(self) -> None:
+    Call = self._post_kwargs({LLM_ENDPOINT_ENV: _URL, LLM_API_KEY_ENV: "k"})
+    self.assertEqual(Call.kwargs["headers"], {"Authorization": "Bearer k"})
+    self.assertEqual(set(Call.kwargs), {"json", "timeout", "headers"})
+
+  def test_empty_api_key_is_treated_as_absent(self) -> None:
+    Call = self._post_kwargs({LLM_ENDPOINT_ENV: _URL, LLM_API_KEY_ENV: ""})
+    self.assertNotIn("headers", Call.kwargs)
 
 
 if __name__ == "__main__":

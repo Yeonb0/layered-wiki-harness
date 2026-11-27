@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import requests
 
 LLM_ENDPOINT_ENV = "LAYERED_WIKI_LLM_ENDPOINT"
+# 공개 시연 서버 (OpenRouter) 용 API 키. 실험 경로는 이 변수를 두지 않으므로 요청이 바뀌지 않는다
+LLM_API_KEY_ENV = "LAYERED_WIKI_LLM_API_KEY"
 
 # 빈 think 블록 ( "<think>\n\n</think>" ) 은 끈 상태의 정상 출력이다 - 그 밖의 내용이 이어지면 새는 것이다
 _LEAKED_THINK = re.compile(r"<think>\s*(?!</think>)\S")
@@ -62,7 +64,12 @@ def chat(messages: list, model_id: str, config: GenerationConfig, response_schem
 
   # 재시도하지 않는다 - 재시도가 처리 시간 측정을 흐리므로 실패는 예외로 올린다
   Started = time.monotonic()
-  Response = requests.post(Endpoint, json=RequestBody, timeout=timeout_seconds)
+  # 키가 있을 때만 헤더를 붙인다 : 없으면 지금과 똑같은 인자로 부른다 (회귀 테스트 ApiKeyHeaderTest)
+  ApiKey = os.environ.get(LLM_API_KEY_ENV, "")
+  if ApiKey:
+    Response = requests.post(Endpoint, json=RequestBody, timeout=timeout_seconds, headers={"Authorization": f"Bearer {ApiKey}"})
+  else:
+    Response = requests.post(Endpoint, json=RequestBody, timeout=timeout_seconds)
   Elapsed = time.monotonic() - Started
   Response.raise_for_status()
   ResponseBody = Response.json()
@@ -80,7 +87,7 @@ def chat(messages: list, model_id: str, config: GenerationConfig, response_schem
   if not isinstance(Content, str):
     raise ValueError("message.content 가 문자열이 아니다")
 
-  # 결정 : thinking 은 전 조건에서 끈다 - 새면 조건 등가성이 깨진다
+  # 결정 : thinking 은 전 조건에서 끄다 - 새면 조건 등가성이 깨진다
   if not config.enable_thinking:
     if Message.get("reasoning_content") not in (None, ""):
       raise ValueError("enable_thinking False 인데 reasoning_content 가 비어 있지 않다")
