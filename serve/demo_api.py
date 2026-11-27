@@ -11,6 +11,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
+from zoneinfo import ZoneInfo
 
 from agent.layer_block import load_layer_block
 from agent.llm_client import GenerationConfig, chat
@@ -30,10 +31,19 @@ from runner.v2_sequential import (
   git_head_commit,
   load_source_docs,
 )
+from serve.limits import DailyCounter
 from serve.assign import ASSIGN_PROMPT_VERSION, AssignOutputError, append_log, run_assign
 from serve.meetings import AlreadyLinkedError, MeetingStore, NotFoundError
 from serve.minutes import TEXT_MAX_CHARS, ConflictError, MinutesStore, source_doc_of
 
+# 공개 시연 서버 (설계 9.7) : 앞단은 Dify 또는 서버 안의 대신 함수 (direct)
+FRONTS = ("dify", "direct")
+# 공개 시연 서버 (설계 9.6) : LLM 을 부르는 POST 경로는 하루 카운터 하나를 함께 쓴다
+_LIMITED_POSTS = ("/run", "/jobs", "/live", "/ask", "/minutes")
+_DAILY_LIMIT_BODY = {"ok": False, "error_type": "DailyLimit", "message": "오늘 시연 투입 한도에 도달했습니다"}
+_HARNESS_COMMIT = re.compile(r"[0-9a-f]{40}")
+# 상한의 날짜 경계는 서울 자정
+DAILY_LIMIT_TZ = "Asia/Seoul"
 # 시연 앞단 ( 사용자 결정 2026-10-16 Dify 필수 ) : 시연은 제안 조건 실행의 설정을 그대로 쓰므로 실행 manifest 의 args 에서 읽을 키를 고정한다
 _REQUIRED_ARGS = (
   "segments", "docs", "doc_ids", "split_doc_ids", "selection", "source_layers", "criteria", "criteria_sha256",
@@ -214,8 +224,16 @@ def group_label(Layer: str, Group, Labels: dict):
 
 
 class DemoApp:
-  def __init__(self, run_dir, chat_fn, embed_backend, commit_fn, work_root, print_fn, dify_fn=None, meetings=None, dify_chat_fn=None) -> None:
+  def __init__(
+    self, run_dir, chat_fn, embed_backend, commit_fn, work_root, print_fn, dify_fn=None, meetings=None, dify_chat_fn=None,
+    *, model_id_override=None, front="dify", daily_counter=None,
+  ) -> None:
     self.chat_fn = chat_fn
+    # 공개 시연 서버 (설계 9.5) : 앞단 종류와 하루 상한. 상한이 None 이면 세지 않는다 (로컬 시연 그대로)
+    if front not in FRONTS:
+      raise ValueError(f"알 수 없는 front: {front!r}")
+    self.front = front
+    self.daily_counter = daily_counter
     # 사용자 결정 2026-11-16 : Q&A 챗플로우를 부르는 함수 - 없으면 /ask 는 503 이다
     self.dify_chat_fn = dify_chat_fn
     # 라이브 투입에서 Dify 스트리밍 이벤트를 차례로 내는 함수 - 없으면 라이브 투입을 받지 않는다
@@ -250,7 +268,9 @@ class DemoApp:
     self.gen_seed = Args["gen_seed"]
     self.decompose_max_tokens = Args["decompose_max_tokens"]
     self.place_max_tokens = Args["place_max_tokens"]
-    self.model_id = Args["model_id"]
+    # 미리 돌린 볼트를 만든 모델 (manifest) 과 라이브 투입 모델을 따로 둔다 : 공개 서버는 외부 모델로 덮어쓴다 (설계 9.5-2)
+    self.base_model_id = Args["model_id"]
+    self.model_id = model_id_override if model_id_override is not None else Args["model_id"]
     self.timeout_seconds = Args["timeout_seconds"]
 
     Docs, self.raw_sha = load_source_docs(
@@ -309,6 +329,10 @@ class DemoApp:
       "modes": list(self.cells),
       "base_notes": {Mode: len(Cell["notes"]) for Mode, Cell in self.cells.items()},
       "base_run": self.base_run,
+      # 첫 화면 · 시연 카드의 모델 고지 (설계 9.3, 가이드 26쪽)
+      "model_id": self.model_id,
+      "base_model_id": self.base_model_id,
+      "front": self.front,
     }
 
   def doc_list(self) -> list[dict]:
@@ -1404,6 +1428,11 @@ class DemoApp:
 def make_handler(App: DemoApp, cors_origin=None):
   class Handler(BaseHTTPRequestHandler):
     def _send(self, Status: int, Obj) -> None:
+      # 상한에서 하나 가져간 요청이 실패로 끝나면 되돌린다 (설계 9.6, 4xx · 5xx)
+      if getattr(self, "_took", False):
+        self._took = False
+        if Status >= 400:
+          App.daily_counter.give_back()
       Data = json.dumps(Obj, ensure_ascii=False).encode("utf-8")
       self.send_response(Status)
       self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1515,6 +1544,13 @@ def make_handler(App: DemoApp, cors_origin=None):
 
     def do_POST(self) -> None:
       Path = urlsplit(self.path).path
+      self._took = False
+      # 상한 대상은 경로만 보고 먼저 센다 : 본문 · 상태 오류는 _send 가 되돌린다
+      if App.daily_counter is not None and self.path == Path and (Path in _LIMITED_POSTS or _ASSIGN_PATH.fullmatch(Path)):
+        if not App.daily_counter.take():
+          self._send(429, dict(_DAILY_LIMIT_BODY))
+          return
+        self._took = True
       if self.path == Path and _is_meetings_path(Path):
         Body = self._read_json_body()
         if Body is _BAD_BODY:
@@ -1579,7 +1615,21 @@ def parse_args(argv=None) -> argparse.Namespace:
   Parser.add_argument("--meetings-seed", default=None)
   # 사용자 결정 2026-10-23 ( 지침 v3.1 ) : 회의록 투입 문서는 합성 시연 코퍼스 차수 901. 시연 작업 폴더에만 쓴다
   Parser.add_argument("--minutes-dir", default=None)
+  # 공개 시연 서버 (설계 9.5 · 9.7) : 앞단은 기본값 없이 반드시 고른다
+  Parser.add_argument("--front", required=True, choices=FRONTS)
+  # 라이브 투입 모델 덮어쓰기 : 없으면 manifest 값
+  Parser.add_argument("--model-id", default=None)
+  # 하루 LLM 경로 상한 : 기본값을 두지 않는다 (숨은 기본값 금지)
+  Parser.add_argument("--daily-job-limit", default=None, type=_positive_int)
+  # 컨테이너에는 .git 이 없다 : 배포 스크립트가 넘긴 커밋을 기록한다
+  Parser.add_argument("--harness-commit", default=None, type=_harness_commit)
   Args = Parser.parse_args(argv)
+  if Args.front == "direct":
+    for Name in ("dify_url", "dify_key_env", "dify_qa_key_env"):
+      if getattr(Args, Name) is not None:
+        Parser.error(f"--front direct 에는 --{Name.replace('_', '-')} 를 줄 수 없다")
+    if Args.model_id is None or Args.daily_job_limit is None:
+      Parser.error("--front direct 에는 --model-id 와 --daily-job-limit 이 필요하다")
   if Args.minutes_dir is not None and Args.meetings_file is None:
     Parser.error("--minutes-dir 는 --meetings-file 과 함께 줘야 한다")
   if (Args.dify_url is None) != (Args.dify_key_env is None):
@@ -1590,6 +1640,33 @@ def parse_args(argv=None) -> argparse.Namespace:
   if Args.meetings_seed is not None and Args.meetings_file is None:
     Parser.error("--meetings-seed 는 --meetings-file 과 함께 줘야 한다")
   return Args
+
+
+def _positive_int(Text: str) -> int:
+  if not re.fullmatch(r"[0-9]+", Text) or int(Text) < 1:
+    raise argparse.ArgumentTypeError(f"양의 정수가 아니다: {Text!r}")
+  return int(Text)
+
+
+def _harness_commit(Text: str) -> str:
+  if not _HARNESS_COMMIT.fullmatch(Text):
+    raise argparse.ArgumentTypeError("40자 소문자 hex 커밋이어야 한다")
+  return Text
+
+
+def commit_fn_from_args(Args, repo_dir=REPO_DIR):
+  # --harness-commit 이 있으면 git 을 부르지 않는다 (컨테이너에는 .git 이 없다)
+  if Args.harness_commit is not None:
+    Commit = Args.harness_commit
+    return lambda: Commit
+  return lambda: git_head_commit(repo_dir)
+
+
+def daily_counter_from_args(Args):
+  if Args.daily_job_limit is None:
+    return None
+  Zone = ZoneInfo(DAILY_LIMIT_TZ)
+  return DailyCounter(Args.daily_job_limit, lambda: datetime.now(Zone).date())
 
 
 # 사용자 결정 2026-10-23 : 라이브 투입은 화면 → 시연 API → Dify 워크플로 → 시연 API /jobs. Dify 앱 키는 서버만 가진다
@@ -1651,9 +1728,10 @@ def _print_flush(Line: str) -> None:
 def main(argv=None) -> None:
   Args = parse_args(argv)
   App = DemoApp(
-    Args.run_dir, chat_fn=chat, embed_backend=None, commit_fn=lambda: git_head_commit(REPO_DIR),
+    Args.run_dir, chat_fn=chat, embed_backend=None, commit_fn=commit_fn_from_args(Args),
     work_root=DEFAULT_WORK_ROOT, print_fn=_print_flush, dify_fn=dify_fn_from_args(Args),
     dify_chat_fn=dify_chat_fn_from_args(Args),
+    model_id_override=Args.model_id, front=Args.front, daily_counter=daily_counter_from_args(Args),
   )
   App.meetings = meetings_from_args(Args, App)
   Minutes = minutes_from_args(Args, App)

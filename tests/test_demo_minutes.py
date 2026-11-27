@@ -557,7 +557,7 @@ class StorageTest(MinutesBase):
 
 class ArgsTest(MinutesBase):
   def test_minutes_dir_needs_meetings_file(self) -> None:
-    Needed = ["--run-dir", "x", "--host", "127.0.0.1", "--port", "1"]
+    Needed = ["--run-dir", "x", "--host", "127.0.0.1", "--port", "1", "--front", "dify"]
     with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
       D.parse_args(Needed + ["--minutes-dir", "y"])
     self.assertEqual(D.parse_args(Needed).minutes_dir, None)

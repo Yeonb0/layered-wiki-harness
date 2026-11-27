@@ -451,8 +451,8 @@ class HttpTest(ViewBase):
     self.assertEqual(Headers.get("Access-Control-Allow-Headers"), "Content-Type")
 
   def test_parse_args_cors_origin_is_optional(self) -> None:
-    self.assertIsNone(D.parse_args(["--run-dir", "r", "--host", "h", "--port", "1"]).cors_origin)
-    self.assertEqual(D.parse_args(["--run-dir", "r", "--host", "h", "--port", "1", "--cors-origin", "http://x"]).cors_origin, "http://x")
+    self.assertIsNone(D.parse_args(["--run-dir", "r", "--host", "h", "--port", "1", "--front", "dify"]).cors_origin)
+    self.assertEqual(D.parse_args(["--run-dir", "r", "--host", "h", "--port", "1", "--front", "dify", "--cors-origin", "http://x"]).cors_origin, "http://x")
 
 
 if __name__ == "__main__":

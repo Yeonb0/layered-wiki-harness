@@ -534,7 +534,7 @@ class HttpTest(MeetingsBase):
 
 
 class ArgsTest(MeetingsBase):
-  BASE = ["--run-dir", "r", "--host", "h", "--port", "1"]
+  BASE = ["--run-dir", "r", "--host", "h", "--port", "1", "--front", "dify"]
 
   def parse(self, *Extra):
     with contextlib.redirect_stderr(io.StringIO()):

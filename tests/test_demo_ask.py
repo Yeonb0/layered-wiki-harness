@@ -195,7 +195,7 @@ class AskHttpTest(AskBase):
 
 class AskArgsTest(unittest.TestCase):
   def test_qa_key_env_needs_dify_url(self) -> None:
-    Base = ["--run-dir", "r", "--host", "h", "--port", "1"]
+    Base = ["--run-dir", "r", "--host", "h", "--port", "1", "--front", "dify"]
     with self.assertRaises(SystemExit):
       D.parse_args(Base + ["--dify-qa-key-env", "X"])
     Args = D.parse_args(Base + ["--dify-url", "http://x", "--dify-key-env", "K", "--dify-qa-key-env", "X"])
@@ -203,7 +203,7 @@ class AskArgsTest(unittest.TestCase):
     self.assertIsNone(D.parse_args(Base).dify_qa_key_env)
 
   def test_chat_fn_from_args(self) -> None:
-    Base = ["--run-dir", "r", "--host", "h", "--port", "1", "--dify-url", "http://x", "--dify-key-env", "K"]
+    Base = ["--run-dir", "r", "--host", "h", "--port", "1", "--front", "dify", "--dify-url", "http://x", "--dify-key-env", "K"]
     self.assertIsNone(D.dify_chat_fn_from_args(D.parse_args(Base), environ={}))
     Args = D.parse_args(Base + ["--dify-qa-key-env", "X"])
     with self.assertRaises(SystemExit):

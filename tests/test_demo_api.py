@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import redirect_stdout
 from unittest import mock
@@ -600,6 +601,148 @@ class JobsHttpTest(JobsBase):
       self.assertEqual(self.call(Base, Bad)[0], 404, Bad)
     self.assertEqual(self.call(Base, "/health")[0], 200)
     self.call(Base, Path + "?wait=10")
+
+
+class PublicServerArgsTest(unittest.TestCase):
+  # 공개 시연 서버 (설계 9.5) : --front 필수, direct 면 Dify 옵션 금지 · 모델 · 상한 필수
+  BASE = ["--run-dir", "r", "--host", "h", "--port", "1"]
+
+  def parse(self, *Extra):
+    with contextlib.redirect_stderr(io.StringIO()):
+      return D.parse_args(self.BASE + list(Extra))
+
+  def test_front_is_required(self) -> None:
+    with self.assertRaises(SystemExit):
+      self.parse()
+
+  def test_direct_rejects_dify_options(self) -> None:
+    Good = ["--front", "direct", "--model-id", "x/y", "--daily-job-limit", "30"]
+    for Extra in (["--dify-url", "http://x", "--dify-key-env", "K"], ["--dify-url", "http://x"], ["--dify-key-env", "K"], ["--dify-qa-key-env", "Q"]):
+      with self.assertRaises(SystemExit, msg=str(Extra)):
+        self.parse(*Good, *Extra)
+
+  def test_direct_needs_model_and_limit(self) -> None:
+    with self.assertRaises(SystemExit):
+      self.parse("--front", "direct", "--daily-job-limit", "30")
+    with self.assertRaises(SystemExit):
+      self.parse("--front", "direct", "--model-id", "x/y")
+    Args = self.parse("--front", "direct", "--model-id", "x/y", "--daily-job-limit", "30")
+    self.assertEqual((Args.front, Args.model_id, Args.daily_job_limit), ("direct", "x/y", 30))
+
+  def test_limit_must_be_positive_int(self) -> None:
+    for Bad in ("0", "-1", "abc", "1.5"):
+      with self.assertRaises(SystemExit, msg=Bad):
+        self.parse("--front", "direct", "--model-id", "x/y", "--daily-job-limit", Bad)
+
+  def test_harness_commit_is_40_hex(self) -> None:
+    for Bad in ("abc", "g" * 40, "A" * 40, "a" * 39):
+      with self.assertRaises(SystemExit, msg=Bad):
+        self.parse("--front", "dify", "--harness-commit", Bad)
+    self.assertEqual(self.parse("--front", "dify", "--harness-commit", "a" * 40).harness_commit, "a" * 40)
+
+  def test_dify_front_keeps_old_rules(self) -> None:
+    Args = self.parse("--front", "dify")
+    self.assertIsNone(Args.model_id)
+    self.assertIsNone(Args.daily_job_limit)
+    with self.assertRaises(SystemExit):
+      self.parse("--front", "dify", "--dify-url", "http://x")
+
+
+class PublicServerAppTest(DemoBase):
+  def test_health_has_model_and_front(self) -> None:
+    Health = self.app().health()
+    self.assertEqual((Health["model_id"], Health["base_model_id"], Health["front"]), ("합성모델", "합성모델", "dify"))
+    App = DemoApp(
+      self.RunDir, chat_fn=fake_chat, embed_backend=Backend(), commit_fn=lambda: "d" * 40,
+      work_root=self.DemoWork, print_fn=self.Lines.append, model_id_override="x/y", front="direct",
+    )
+    Health = App.health()
+    self.assertEqual((Health["model_id"], Health["base_model_id"], Health["front"]), ("x/y", "합성모델", "direct"))
+
+  def test_model_override_reaches_chat(self) -> None:
+    Seen = []
+    def spy(messages, model_id, config, response_schema, *, timeout_seconds):
+      Seen.append(model_id)
+      return fake_chat(messages, model_id, config, response_schema, timeout_seconds=timeout_seconds)
+    App = DemoApp(
+      self.RunDir, chat_fn=spy, embed_backend=Backend(), commit_fn=lambda: "d" * 40,
+      work_root=self.DemoWork, print_fn=self.Lines.append, model_id_override="x/y", front="direct",
+    )
+    Status, _ = App.run({"doc_id": _DOCS[2][0], "mode": "all_layers"})
+    self.assertEqual(Status, 200)
+    self.assertTrue(Seen)
+    self.assertEqual(set(Seen), {"x/y"})
+
+  def test_harness_commit_from_args(self) -> None:
+    with mock.patch.object(D, "git_head_commit", side_effect=AssertionError("git 을 부르면 안 된다")):
+      Args = D.parse_args(["--run-dir", self.RunDir, "--host", "h", "--port", "1", "--front", "dify", "--harness-commit", "e" * 40])
+      self.assertEqual(D.commit_fn_from_args(Args)(), "e" * 40)
+
+
+class DailyLimitHttpTest(JobsBase):
+  def serve(self, App: DemoApp) -> str:
+    return JobsHttpTest.serve(self, App)
+
+  def call(self, Base: str, Path: str, Body=None):
+    return JobsHttpTest.call(self, Base, Path, Body)
+
+  def limited_app(self, Limit: int) -> DemoApp:
+    from serve.limits import DailyCounter
+    import datetime
+
+    App = DemoApp(
+      self.RunDir, chat_fn=fake_chat, embed_backend=Backend(), commit_fn=lambda: "d" * 40,
+      work_root=self.DemoWork, print_fn=self.Lines.append, daily_counter=DailyCounter(Limit, lambda: datetime.date(2026, 12, 16)),
+    )
+    self.addCleanup(self.join_jobs, App)
+    return App
+
+  def test_second_job_is_429_with_fixed_body(self) -> None:
+    App = self.limited_app(1)
+    Base = self.serve(App)
+    Status, Submitted = self.call(Base, "/jobs", {"doc_id": _DOCS[2][0], "mode": "all_layers"})
+    self.assertEqual(Status, 202)
+    self.call(Base, f"/jobs/{Submitted['job_id']}?wait=10")
+    Status, Body = self.call(Base, "/jobs", {"doc_id": _DOCS[3][0], "mode": "all_layers"})
+    self.assertEqual(Status, 429)
+    self.assertEqual(Body, {"ok": False, "error_type": "DailyLimit", "message": "오늘 시연 투입 한도에 도달했습니다"})
+
+  def test_failed_request_gives_back(self) -> None:
+    App = self.limited_app(1)
+    Base = self.serve(App)
+    self.assertEqual(self.call(Base, "/jobs", {"doc_id": "없는문서", "mode": "all_layers"})[0], 404)
+    self.assertEqual(App.daily_counter.used(), 0)
+    self.assertEqual(self.call(Base, "/jobs", {"doc_id": _DOCS[2][0], "mode": "all_layers"})[0], 202)
+    self.assertEqual(App.daily_counter.used(), 1)
+
+  def test_get_requests_are_not_counted(self) -> None:
+    App = self.limited_app(1)
+    Base = self.serve(App)
+    for Path in ("/health", "/docs", "/viewers", "/view?mode=all_layers&viewer=" + urllib.parse.quote("전사")):
+      self.call(Base, Path)
+    self.assertEqual(App.daily_counter.used(), 0)
+
+  def test_all_llm_paths_share_counter(self) -> None:
+    # 상한 대상 POST 는 본문이 틀려도 먼저 센 뒤 4xx 로 되돌린다 : 대상이 아닌 경로는 아예 세지 않는다
+    App = self.limited_app(5)
+    Counted = []
+    Orig = App.daily_counter.take
+    def spy() -> bool:
+      Counted.append(1)
+      return Orig()
+    App.daily_counter.take = spy
+    Base = self.serve(App)
+    for Path in ("/run", "/jobs", "/live", "/ask", "/minutes", "/meetings/m1/assign"):
+      self.call(Base, Path, {})
+    self.assertEqual(len(Counted), 6)
+    self.call(Base, "/meetings", {})
+    self.call(Base, "/proposals", {})
+    self.assertEqual(len(Counted), 6)
+    self.assertEqual(App.daily_counter.used(), 0)
+
+  def test_no_counter_means_no_limit(self) -> None:
+    App = self.start()
+    self.assertIsNone(App.daily_counter)
 
 
 class CliTest(DemoBase):
