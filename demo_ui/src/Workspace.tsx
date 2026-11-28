@@ -1,4 +1,5 @@
 // 사용자 결정 2026-10-23 : 화면은 옵시디언 + 대시보드 느낌 - 왼쪽 탐색기, 가운데 탭, 오른쪽 연결 패널, 아래 상태 막대
+// 사용자 요청 2026-11-28 : 위쪽 막대에 보는 사람 · 모드를 모으고 왼쪽 리본을 뺀다
 // 사용자 결정 2026-10-23 : 들어오는 링크 ( 백링크 같은 것 ) 는 보여 주지 않는다 - 고정 결정 "백링크 미기록" 과 헷갈리지 않게
 // 사용자 결정 2026-10-21 · 23 : 보는 사람별 거르기는 서버가 하고 화면은 받은 것만 그린다. 보는 사람 선택은 인증이 아니다
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -6,6 +7,8 @@ import { fetchMeetings, type Mode, type Viewer, type ViewNote } from './api'
 import { CompareMode } from './CompareMode'
 import { CompareViewer } from './CompareViewer'
 import { Dashboard } from './Dashboard'
+import { LAYER_COLOR } from './colors'
+import { dashboardStats } from './stats'
 import { GraphTab } from './GraphTab'
 import { LiveTab } from './LiveTab'
 import { MeetingPage } from './MeetingPage'
@@ -94,6 +97,9 @@ export function Workspace({
   const [graphSelected, setGraphSelected] = useState<string | null>(null)
 
   const notes = current.data?.notes ?? null
+  // 탐색기의 빈 층 안내용 - 다른 모드의 보기를 세기만 한다
+  const otherView = views[mode === 'all_layers' ? 'split_by_layer' : 'all_layers'].data
+  const otherModeCounts = useMemo(() => (otherView ? dashboardStats(otherView).notesByLayer : null), [otherView])
   const titles = useMemo(() => new Map((notes ?? []).map((n) => [n.note_id, n.title])), [notes])
   // 모드를 바꿔 보기가 달라지면 새 보기에 없는 노트의 탭과 그래프 선택을 닫는다
   useEffect(() => {
@@ -251,44 +257,42 @@ export function Workspace({
       // 접힌 패널 칸은 0px 이고 손잡이 6px 칸은 남긴다 - 접힌 패널은 없애지 않고 칸 폭 0 + overflow hidden 으로 감춰 펼침 상태 · 스크롤 위치를 유지한다
       data-sidebar-collapsed={panels.collapsed.sidebar}
       data-connections-collapsed={panels.collapsed.connections}
-      style={{ gridTemplateColumns: `76px ${columnWidth('sidebar')}px 6px minmax(0, 1fr) 6px ${columnWidth('connections')}px` }}
+      style={{ gridTemplateColumns: `${columnWidth('sidebar')}px 6px minmax(0, 1fr) 6px ${columnWidth('connections')}px` }}
     >
-      <aside className="ribbon">
-        <div className="ribbon-top">
-          <button aria-pressed={!panels.collapsed.sidebar} onClick={() => setCollapsed('sidebar', !panels.collapsed.sidebar)}>
-            탐색기
-          </button>
-          <button className={tabs.active === DASHBOARD_TAB ? 'on' : ''} onClick={() => setTabs((s) => activate(s, DASHBOARD_TAB))}>
-            대시보드
-          </button>
-          <button className={tabs.active === GRAPH_TAB ? 'on' : ''} onClick={() => setTabs((s) => activate(s, GRAPH_TAB))}>
-            그래프
-          </button>
-          <button className={tabs.active === MEETINGS_TAB ? 'on' : ''} onClick={() => setTabs((s) => activate(s, MEETINGS_TAB))}>
-            회의
-          </button>
-          <button
-            className={tabs.active === COMPARE_VIEWER_TAB ? 'on' : ''}
-            onClick={() => setTabs((s) => activate(s, COMPARE_VIEWER_TAB))}
-          >
-            보는 사람 비교
-          </button>
-          <button
-            className={tabs.active === COMPARE_MODE_TAB ? 'on' : ''}
-            onClick={() => setTabs((s) => activate(s, COMPARE_MODE_TAB))}
-          >
-            모드 비교
-          </button>
-          <button className={tabs.active === LIVE_TAB ? 'on' : ''} onClick={() => setTabs((s) => activate(s, LIVE_TAB))}>
-            라이브 투입
-          </button>
-          <button className={tabs.active === QA_TAB ? 'on' : ''} onClick={() => setTabs((s) => activate(s, QA_TAB))}>
-            Q&amp;A
-          </button>
+      {/* 사용자 요청 2026-11-28 : 왼쪽 리본은 위쪽 탭과 같은 항목을 되풀이해서 뺐다 - 보는 사람 · 모드 · 탐색기 접기를 위쪽 막대 한 줄에 모은다 */}
+      <header className="topbar">
+        <span className="brand">Layered Wiki</span>
+        <button className="viewer-chip" onClick={onChangeViewer} title="보는 사람 바꾸기">
+          <span className="viewer-avatar" style={{ color: LAYER_COLOR[viewer.layer], borderColor: LAYER_COLOR[viewer.layer] }}>
+            {viewer.label.slice(-1)}
+          </span>
+          <span className="viewer-name">{viewer.label}</span>
+          <span className="muted">{viewer.layer}</span>
+          <span className="muted">바꾸기</span>
+        </button>
+        <div className="modes" role="group" aria-label="모드">
+          {(Object.keys(MODE_LABEL) as Mode[]).map((m) => (
+            <button key={m} aria-pressed={m === mode} onClick={() => setMode(m)}>
+              {MODE_LABEL[m]}
+            </button>
+          ))}
         </div>
-        <button onClick={onChangeViewer}>보는 사람 바꾸기</button>
-      </aside>
-      <Sidebar viewer={viewer} mode={mode} onMode={setMode} notes={notes} activeNoteId={activeNoteId} onOpenNote={openNote} />
+        <button
+          className="topbar-toggle"
+          aria-pressed={!panels.collapsed.sidebar}
+          onClick={() => setCollapsed('sidebar', !panels.collapsed.sidebar)}
+        >
+          탐색기
+        </button>
+      </header>
+      <Sidebar
+        viewer={viewer}
+        mode={mode}
+        otherModeCounts={otherModeCounts}
+        notes={notes}
+        activeNoteId={activeNoteId}
+        onOpenNote={openNote}
+      />
       <Resizer
         panel="sidebar"
         width={panels.widths.sidebar}

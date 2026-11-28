@@ -1,6 +1,6 @@
 // 사용자 요청 2026-10-23 : 탐색기 · 연결 패널 폭을 끌어서 바꾼다. 폭은 이 브라우저에만 기억한다 ( 화면 편의, 보기 데이터와 무관 )
 export const PANEL_LIMITS = {
-  sidebar: { min: 200, max: 520, initial: 270 },
+  sidebar: { min: 200, max: 520, initial: 340 },
   connections: { min: 220, max: 560, initial: 300 },
 } as const
 

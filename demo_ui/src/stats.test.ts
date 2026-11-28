@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ViewNote, ViewResponse } from './api'
-import { dashboardStats } from './stats'
+import { dashboardStats, largestLayer, layerDeltas } from './stats'
 
 // 픽스처일 뿐이며 규칙과 무관하다 - 이름은 전부 합성이다
 function note(id: string, layer: string, up: string[] = [], down: string[] = []): ViewNote {
@@ -39,5 +39,26 @@ describe('dashboardStats', () => {
 
   it('층 순서에 없는 값은 오류다', () => {
     expect(() => dashboardStats(view([note('가', '없는층')]))).toThrow()
+  })
+})
+
+// 사용자 요청 2026-11-28 : 대시보드 가독성 개선 - 두 모드 증감과 한 문장 요약용 계산
+describe('layerDeltas', () => {
+  it('층마다 둘째 값에서 첫째 값을 뺀다', () => {
+    expect(layerDeltas({ 전사: 4, 팀: 13, 개인: 0 }, { 전사: 4, 팀: 7, 개인: 2 })).toEqual({ 전사: 0, 팀: -6, 개인: 2 })
+  })
+})
+
+describe('largestLayer', () => {
+  it('노트가 가장 많은 층을 고른다', () => {
+    expect(largestLayer({ 전사: 4, 팀: 13, 개인: 0 })).toEqual({ layer: '팀', count: 13 })
+  })
+
+  it('같으면 층 순서 ( 전사 · 팀 · 개인 ) 에서 앞선 층이다', () => {
+    expect(largestLayer({ 전사: 3, 팀: 3, 개인: 1 })).toEqual({ layer: '전사', count: 3 })
+  })
+
+  it('모두 0 이면 null 이다', () => {
+    expect(largestLayer({ 전사: 0, 팀: 0, 개인: 0 })).toBeNull()
   })
 })

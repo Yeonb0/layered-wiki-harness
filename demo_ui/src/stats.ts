@@ -34,3 +34,20 @@ export function dashboardStats(view: ViewResponse): DashboardStats {
     hiddenUpward: view.counts.upward_links_hidden,
   }
 }
+
+// 사용자 요청 2026-11-28 : 대시보드 가독성 개선 - 두 모드의 층별 증감 ( to - from )
+export function layerDeltas(from: Record<Band, number>, to: Record<Band, number>): Record<Band, number> {
+  const deltas = { 전사: 0, 팀: 0, 개인: 0 } as Record<Band, number>
+  for (const band of BANDS) deltas[band] = to[band] - from[band]
+  return deltas
+}
+
+// 한 문장 요약에 쓰는 가장 큰 층 - 같으면 층 순서에서 앞선 층, 모두 0 이면 null
+export function largestLayer(notesByLayer: Record<Band, number>): { layer: Band; count: number } | null {
+  let best: { layer: Band; count: number } | null = null
+  for (const band of BANDS) {
+    const count = notesByLayer[band]
+    if (count > 0 && (best === null || count > best.count)) best = { layer: band, count }
+  }
+  return best
+}
