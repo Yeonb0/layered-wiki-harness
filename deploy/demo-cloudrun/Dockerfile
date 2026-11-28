@@ -10,7 +10,8 @@ ARG LLAMA_CPP_REF=b10453
 RUN git clone --depth 1 --branch "$LLAMA_CPP_REF" https://github.com/ggml-org/llama.cpp /src/llama.cpp
 WORKDIR /src/llama.cpp
 # 특정 CPU 명령에 묶지 않는다 : Cloud Run 의 CPU 종류를 고를 수 없다
-RUN cmake -B build -DGGML_NATIVE=OFF -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release \
+# 웹 UI 는 끈다 : 임베딩 전용이라 필요 없고, 켜 두면 빌드 중 UI 자산 내려받기가 실패한다 (Cloud Build 070b194f)
+RUN cmake -B build -DGGML_NATIVE=OFF -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_UI=OFF -DCMAKE_BUILD_TYPE=Release \
   && cmake --build build --target llama-server -j "$(nproc)"
 
 # 2단계 : 실행 이미지
